@@ -117,6 +117,11 @@ def sample_to_training_record(sample: TikzSample) -> dict:
     )
     assistant_text = body.strip() + "\n```\n"
 
+    from .prompting import PROMPT_CONTRACT_VERSION, prompt_template_sha256
+    metadata["prompt_contract_version"] = PROMPT_CONTRACT_VERSION
+    metadata["prompt_template_sha256"] = prompt_template_sha256()
+    metadata["target_contract"] = "body_only_environment"
+
     return {
         "sample_id": sample.sample_id,
         "source": sample.source,
@@ -150,6 +155,12 @@ def sample_to_stage2_record(sample: TikzSample) -> dict:
         raise ValueError("Stage 2 training sample must include a description.")
 
     metadata, generation_mode, geometry_hints = enrich_training_metadata(sample)
+    
+    from .prompting import PROMPT_CONTRACT_VERSION, prompt_template_sha256
+    metadata["prompt_contract_version"] = PROMPT_CONTRACT_VERSION
+    metadata["prompt_template_sha256"] = prompt_template_sha256()
+    metadata["target_contract"] = "body_only_environment"
+
     return {
         "sample_id": sample.sample_id,
         "prompt_text": build_generation_prompt(
@@ -157,7 +168,7 @@ def sample_to_stage2_record(sample: TikzSample) -> dict:
             generation_mode=generation_mode,
             geometry_hints=geometry_hints,
         ),
-        "reference_code": sample.normalized_code,
+        "reference_code": normalize_for_training_target(sample.normalized_code),
         "reference_image_path": sample.image_path,
         "reference_embedding_path": None,
         "metadata": metadata,

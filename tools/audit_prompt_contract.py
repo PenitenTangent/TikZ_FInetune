@@ -76,6 +76,7 @@ def audit_file(path: Path) -> dict:
         "record_count": 0,
         "prompt_violations": {},
         "assistant_violations": {},
+        "metadata_wrong_contract": 0,
         "assistant_no_env_start": 0,
         "assistant_fence_not_exactly_once": 0,
         "violation_sample_ids": [],
@@ -92,13 +93,13 @@ def audit_file(path: Path) -> dict:
 
             # Check metadata
             metadata = record.get("metadata", {})
+            record_has_violation = False
+            
             if metadata.get("prompt_contract_version") != "tikz_body_only_v3":
-                counts["violation_sample_ids"].append(sample_id)
-                counts["total_violations"] += 1
-                continue
+                counts["metadata_wrong_contract"] += 1
+                record_has_violation = True
 
             messages = record.get("messages", [])
-            record_has_violation = False
 
             for msg in messages:
                 role = msg.get("role", "")
@@ -135,12 +136,15 @@ def audit_file(path: Path) -> dict:
                 counts["violation_sample_ids"].append(sample_id)
 
     total_prompt_violations = sum(counts["prompt_violations"].values())
-    total_assistant_violations = sum(counts["assistant_violations"].values())
+    total_assistant_violations = (
+        sum(counts["assistant_violations"].values())
+        + counts["assistant_no_env_start"]
+        + counts["assistant_fence_not_exactly_once"]
+    )
     counts["total_violations"] = (
         total_prompt_violations
         + total_assistant_violations
-        + counts["assistant_no_env_start"]
-        + counts["assistant_fence_not_exactly_once"]
+        + counts["metadata_wrong_contract"]
     )
     counts["violation_record_count"] = len(counts["violation_sample_ids"])
     return counts

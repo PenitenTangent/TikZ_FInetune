@@ -216,14 +216,15 @@ def _load_and_validate_pack_audit(
     return payload
 
 
-def _verify_cache_audit(cache_path: Path, config: PipelineConfig, is_packed: bool = False) -> dict[str, Any]:
+def _verify_cache_audit(cache_path: Path, config: PipelineConfig, dataset_path: Path | None = None, is_packed: bool = False) -> dict[str, Any]:
     from .prompting import PROMPT_CONTRACT_VERSION, prompt_template_sha256
     
     audit_path = cache_path.with_name(cache_path.stem + "_audit.json")
     if not audit_path.exists():
-        if is_packed:
-            raise RuntimeError(f"Packed dataset audit is missing: {audit_path}")
-        return {}
+        raise RuntimeError(
+            f"Pretokenized cache audit is missing: {audit_path}. "
+            "Every cache must have a matching audit file. Re-run pretokenization/packing."
+        )
         
     try:
         with audit_path.open("r", encoding="utf-8") as f:
@@ -268,7 +269,8 @@ def _verify_cache_audit(cache_path: Path, config: PipelineConfig, is_packed: boo
             )
             
     # 5. Source JSONL SHA256 (prevents using cache from different data)
-    source_path = config.training.dataset_path
+    # Prefer checking against the actual runtime dataset path
+    source_path = dataset_path or config.training.dataset_path
     if source_path and "source_jsonl_sha256" in audit:
         live_sha = _file_sha256(source_path)
         recorded_sha = audit["source_jsonl_sha256"]
@@ -2095,7 +2097,7 @@ def _execute_training(
                     "Run tools/pack_tokenized_dataset.py to generate them."
                 )
                 
-            _verify_cache_audit(packed_path, config, is_packed=True)
+            _verify_cache_audit(packed_path, config, dataset_path=plan.dataset_path, is_packed=True)
             
             print(f"Loading packed training cache from {packed_path}...")
             packed_ids = np.load(packed_path, mmap_mode="r")
@@ -2156,7 +2158,7 @@ def _execute_training(
                     # syntax_weight_lookup may have been built earlier
                     syntax_weights = None
                     
-            _verify_cache_audit(config.training.pretokenized_cache_path, config, is_packed=False)
+            _verify_cache_audit(config.training.pretokenized_cache_path, config, dataset_path=plan.dataset_path, is_packed=False)
             
             print(f"Loading pre-tokenized training cache from {config.training.pretokenized_cache_path}...")
             tokenized_data = np.load(config.training.pretokenized_cache_path, allow_pickle=True)
