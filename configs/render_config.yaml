@@ -1,0 +1,13 @@
+rasterization:
+  dpi: 150
+  page_width_pt: 595
+  page_height_pt: 842
+  anti_aliasing: false
+  background: white
+  output_format: png
+  color_depth: 8
+encoder:
+  normalize_l2: true
+  resize_before_encode:
+    - 224
+    - 224

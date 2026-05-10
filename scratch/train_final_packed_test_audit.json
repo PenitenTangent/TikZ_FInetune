@@ -1,0 +1,22 @@
+{
+  "assistant_token_used": 4368,
+  "audit_timestamp": "2026-05-07T20:44:17Z",
+  "dataset_sha256": "a58ea66bdacc86dca22af440a549153e145a7debff8f86998453c4fb70d0d8ca",
+  "disabled_rules": [],
+  "marker_hit_rate": 1.0,
+  "mask_zero_fraction": 0.6305703283828686,
+  "metadata_jsonl": "/Users/andrisoueslati/Code/TikZ/data/prepared/train_final_hardened.jsonl",
+  "normalization_config_hash": "",
+  "pretokenize_audit_path": "/Users/andrisoueslati/Code/TikZ/data/prepared/train_final_tokenized_audit.json",
+  "pretokenize_audit_sha256": "74ba3049f0434e99810ff88087aaabc2a016d3e8da72b691d87125edac7f4859",
+  "pretokenize_source_jsonl_sha256": "cd1429c4d7e2b93fed7e1e6ddf349e0c7e8909a3863fea14a7c7c21439b156ad",
+  "pretokenize_source_row_count": 275268,
+  "prompt_contract_version": "tikz_partial_decode_v1",
+  "reward_weighted": true,
+  "scoring_status": "metadata_weighted",
+  "sequences_input": 270646,
+  "sequences_packed": 162813,
+  "source_dataset_sha256": "3f51f5da6f60768445ae5321808af9ce55dccd0a394d01deab3b9a23db8f729f",
+  "syntax_weighted": false,
+  "truncated_sequences": 0
+}

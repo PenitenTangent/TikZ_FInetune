@@ -1,0 +1,2 @@
+[console_scripts]
+tikz-mlx = tikz_mlx.cli:main

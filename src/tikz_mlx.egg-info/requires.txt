@@ -1,0 +1,12 @@
+datasets
+mlx
+mlx-lm
+mlx-vlm
+numpy
+Pillow
+PyYAML
+POT
+pypdfium2
+
+[dev]
+pytest

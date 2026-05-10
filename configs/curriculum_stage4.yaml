@@ -1,0 +1,129 @@
+compiler:
+  keep_intermediates: false
+  keep_logs: true
+  tectonic_binary: tools/bin/tectonic
+  timeout_seconds: 15
+  untrusted: true
+dataset:
+  deduplicate: true
+  max_chars: 4000
+  min_chars: 100
+  reject_external_dependencies: true
+  split_seed: 17
+  supported_environments:
+  - tikzpicture
+  - tikz-cd
+  - circuitikz
+evaluation:
+  min_validation_compilation_rate: 0.0
+inference:
+  compile_repair_candidates: 2
+  compile_repair_decoding:
+    max_tokens: 896
+    min_p: 0.05
+    repetition_penalty: 1.1
+    temperature: 0.3
+    top_k: 48
+    top_p: 0.85
+  debug_grid_step_px: 32
+  initial_candidates: 4
+  initial_decoding:
+    max_tokens: 4096
+    min_p: 0.05
+    repetition_penalty: 1.15
+    temperature: 0.0
+    top_k: 64
+    top_p: 1.0
+  max_retries: 3
+  repair_max_retries: 2
+  visual_refine_on_success: true
+  visual_repair_candidates: 2
+  visual_repair_decoding:
+    max_tokens: 896
+    min_p: 0.04
+    repetition_penalty: 1.06
+    temperature: 0.6
+    top_k: 64
+    top_p: 0.9
+memory:
+  batch_size: 1
+  clear_cache_between_retries: true
+  freeze_vision: true
+  gradient_accumulation_steps: 4
+  gradient_checkpointing: true
+  peak_memory_abort_gb: 18.0
+  retry_cache_policy: clear
+  wired_limit_fraction: 0.9
+model:
+  enable_thinking: false
+  image_resize_shape:
+  - 448
+  - 448
+  max_context_tokens: 1792
+  max_output_tokens: 2048
+  model_id: mlx-community/gemma-4-e4b-it-6bit
+  temperature: 1.0
+  top_k: 64
+  top_p: 0.9
+paths:
+  cache_dir: .cache
+  data_dir: data
+  manifests_dir: data/manifests
+  outputs_dir: outputs
+  prepared_dir: data/prepared
+  runs_dir: runs
+training:
+  allow_full_training: true
+  assistant_id: 4368
+  auto_resume_latest_checkpoint: false
+  checkpoint_cleanup_interval_seconds: 20
+  checkpoint_keep_last: 40
+  completion_mask_preflight_enabled: true
+  completion_mask_preflight_min_marker_hit_rate: 0.9
+  completion_mask_preflight_min_mask_zero_fraction: 0.01
+  completion_mask_preflight_rows: 2500
+  coverage:
+    enabled: false
+    epoch_orders_dir_name: epoch_orders_clean_adapter
+    lock_file_name: train_clean_adapter.lock
+    order_mode: epoch-shuffle
+    order_seed_base: 17
+    require_state_for_resume: true
+    save_interval_steps: 200
+    state_file_name: coverage_state_clean_adapter.json
+    strict_fingerprint: true
+  dataset_path: data/prepared/curriculum/train_stage4_clean.jsonl
+  dry_run_steps: 2
+  epochs: 1
+  gold_eval_dataset_path: data/prepared/gold_eval_unified_clean.jsonl
+  iters: 120
+  learning_rate: 8.0e-06
+  lora_alpha: 48
+  lora_dropout: 0.0
+  lora_num_layers: 28
+  lora_rank: 24
+  max_grad_norm: 1.0
+  min_validation_compilation_rate: 0.2
+  pretokenized_cache_path: data/prepared/curriculum/train_stage4_clean_tokenized.npy
+  pretokenized_packed_cache_path: null
+  require_nonempty_gold_eval_dataset: true
+  require_nonempty_validation_dataset: true
+  resume_adapter_path: null
+  reward_weight_ceil: 1.0
+  reward_weight_field: sample_weight
+  reward_weight_floor: 0.0
+  reward_weight_path: null
+  reward_weighted_loss: false
+  steps_per_eval: 25
+  steps_per_save: 25
+  syntax_command_weight: 2.0
+  syntax_coordinate_weight: 1.0
+  syntax_structural_weight: 5.0
+  syntax_weight_path: null
+  syntax_weighted_loss: false
+  train_dataset_path: data/prepared/curriculum/train_stage4_clean.jsonl
+  train_on_completions: true
+  val_batches: 4
+  val_dataset_path: data/prepared/val_unified_clean.jsonl
+  validation_compile_probe_limit: 8
+  weight_decay: 0.01

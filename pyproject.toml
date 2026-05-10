@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tikz-mlx"
+version = "0.1.0"
+description = "Apple-Silicon-native text-to-TikZ pipeline built around MLX and mlx-vlm."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "datasets",
+  "mlx",
+  "mlx-lm",
+  "mlx-vlm",
+  "numpy",
+  "Pillow",
+  "PyYAML",
+  "POT",
+  "pypdfium2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+alignment = [
+  "sentence-transformers",
+]
+
+[project.scripts]
+tikz-mlx = "tikz_mlx.cli:main"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

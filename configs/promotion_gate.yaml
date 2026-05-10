@@ -1,0 +1,12 @@
+promotion_gate:
+  normal:
+    min_compile_rate: 0.20
+    max_raw_repetition_loop_rate: 0.02
+    min_substantive_rate: 0.80
+  stage4_probe:
+    min_compile_rate: 0.15
+    max_raw_repetition_loop_rate: 0.02
+    min_substantive_rate: 0.75
+  global:
+    max_truncation_rate: 0.10
+    max_avg_length_ratio_vs_base: 2.5

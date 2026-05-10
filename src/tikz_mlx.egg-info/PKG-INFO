@@ -1,0 +1,81 @@
+Metadata-Version: 2.4
+Name: tikz-mlx
+Version: 0.1.0
+Summary: Apple-Silicon-native text-to-TikZ pipeline built around MLX and mlx-vlm.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: datasets
+Requires-Dist: mlx
+Requires-Dist: mlx-lm
+Requires-Dist: mlx-vlm
+Requires-Dist: numpy
+Requires-Dist: Pillow
+Requires-Dist: PyYAML
+Requires-Dist: POT
+Requires-Dist: pypdfium2
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+
+# TikZ MLX Pipeline
+
+Apple-Silicon-native text-to-TikZ pipeline for a 24 GB M4 Pro Mac mini.
+
+This repository is structured to build the full system around fine-tuning first, while intentionally deferring the final long-running fine-tuning job until the rest of the pipeline is stable. The current implementation focus is:
+
+- streaming data preparation for DaTikZ-style corpora
+- safe compilation and structured compiler feedback with `tectonic`
+- MLX / `mlx-vlm` inference adapters for Gemma 4 style multimodal models
+- split repair loops for syntax fixes and visual fixes
+- evaluation and reward interfaces
+- a guarded training dry-run harness instead of a long finetuning run
+
+## Design principles
+
+- No CUDA, Triton, or PyTorch runtime path in project code
+- One large model resident at a time on the 24 GB machine
+- Immutable canonical TikZ output; debug overlays are derived artifacts
+- Visual repair only after a successful render exists
+- Training code is built now, but the final long run stays opt-in
+
+## Layout
+
+```text
+configs/            Runtime and training configuration
+src/tikz_mlx/       Package code
+tests/              Focused regression tests for core logic
+```
+
+## Quick start
+
+```bash
+make install
+make prep
+make check-dataset
+make prep-dataset
+make train
+```
+
+`make train` is intentionally wired to the training dry-run path until you explicitly allow a full run in config or CLI flags.
+
+## Dataset preparation
+
+Run a fast readiness probe before full streaming preparation:
+
+`tikz-mlx check-dataset --dataset-id nllg/DaTikZ-V4 --split train --sample-limit 128`
+
+Then prepare data with:
+
+Use `tikz-mlx prepare-dataset --config configs/lora_prod.yaml --overwrite` to stream `nllg/DaTikZ-V4` from Hugging Face into:
+
+- `data/prepared/train.jsonl` for SFT
+- `data/prepared/train_stage2.jsonl` for stage 2
+- `data/prepared/images/` for reference images
+- `data/manifests/datikz_v4_prepare_manifest.json` for preparation stats
+
+The pipeline rejects malformed rows defensively (`missing_tikz_code`, `missing_description`) and only attaches image paths when image writes succeed.
+
+To append a local figure, run `tikz-mlx add-figure --config configs/lora_prod.yaml --tex-file path/to/figure.tex --image-file path/to/figure.png --description "..."`.
+
+## Inference profile
+
+The production config now uses bounded best-of-N generation (`initial_candidates=4`) with compile-aware selection and phase-specific decoding for initial generation, compile repair, and visual repair. This improves compile reliability while keeping retry budgets and Apple-Silicon memory limits conservative.

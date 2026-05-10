@@ -1,0 +1,172 @@
+paths:
+  data_dir: data
+  prepared_dir: data/prepared
+  manifests_dir: data/manifests
+  outputs_dir: outputs
+  runs_dir: runs
+  cache_dir: .cache
+
+model:
+  model_id: mlx-community/gemma-4-e4b-it-6bit
+  max_context_tokens: 1536
+  max_output_tokens: 2048
+  image_resize_shape: [448, 448]
+  temperature: 1.0
+  top_p: 0.9
+  top_k: 64
+  enable_thinking: false
+
+compiler:
+  tectonic_binary: tools/bin/tectonic
+  timeout_seconds: 15
+  keep_logs: true
+  keep_intermediates: false
+  untrusted: true
+
+memory:
+  batch_size: 1
+  gradient_checkpointing: true
+  gradient_accumulation_steps: 2
+  freeze_vision: true
+  clear_cache_between_retries: true
+  retry_cache_policy: clear
+  peak_memory_abort_gb: 20.0
+  wired_limit_fraction: 0.9
+
+dataset:
+  min_chars: 100
+  max_chars: 4000
+  split_seed: 17
+  supported_environments:
+    - tikzpicture
+    - tikz-cd
+    - circuitikz
+  reject_external_dependencies: true
+  deduplicate: true
+
+inference:
+  max_retries: 3
+  repair_max_retries: 2
+  visual_refine_on_success: true
+  debug_grid_step_px: 32
+  initial_candidates: 4
+  compile_repair_candidates: 2
+  visual_repair_candidates: 2
+  initial_decoding:
+    max_tokens: 4096
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 64
+    min_p: 0.05
+    repetition_penalty: 1.15
+  compile_repair_decoding:
+    max_tokens: 896
+    temperature: 0.3
+    top_p: 0.85
+    top_k: 48
+    min_p: 0.05
+    repetition_penalty: 1.1
+  visual_repair_decoding:
+    max_tokens: 896
+    temperature: 0.6
+    top_p: 0.9
+    top_k: 64
+    min_p: 0.04
+    repetition_penalty: 1.06
+
+training:
+  dataset_path: data/prepared/train_unified.jsonl
+  val_dataset_path: data/prepared/val_unified.jsonl
+  gold_eval_dataset_path: data/prepared/gold_eval_unified.jsonl
+  require_nonempty_validation_dataset: true
+  require_nonempty_gold_eval_dataset: true
+  min_validation_compilation_rate: 0.0
+  validation_compile_probe_limit: 25
+  dry_run_steps: 2
+  learning_rate: 2.0e-05
+  max_grad_norm: 1.0
+  epochs: 1
+  pretokenized_packed_cache_path: null
+  steps_per_save: 100
+  steps_per_eval: 100
+  checkpoint_keep_last: 40
+  checkpoint_pin_iterations: [50000, 100000, 150000]
+  checkpoint_cleanup_interval_seconds: 20
+  lora_rank: 24
+  lora_alpha: 48
+  lora_dropout: 0.0      # plan §1.2: zero dropout (was 0.1)
+  lora_num_layers: 14
+  auto_resume_latest_checkpoint: false
+  train_on_completions: true
+  assistant_id: 4368
+  completion_mask_preflight_enabled: true
+  completion_mask_preflight_rows: 2500
+  completion_mask_preflight_min_marker_hit_rate: 0.9
+  completion_mask_preflight_min_mask_zero_fraction: 0.01
+  reward_weighted_loss: false
+  reward_weight_field: sample_weight
+  reward_weight_floor: 0.0
+  reward_weight_ceil: 1.0
+  reward_weight_path:
+  syntax_weighted_loss: false
+  syntax_weight_path:
+  syntax_structural_weight: 5.0
+  syntax_command_weight: 2.0
+  syntax_coordinate_weight: 1.0
+  weight_decay: 0.01
+  allow_full_training: true
+  resume_adapter_path:
+  coverage:
+    enabled: true
+    strict_fingerprint: true
+    require_state_for_resume: true
+    save_interval_steps: 50
+    order_mode: epoch-shuffle
+    order_seed_base: 17
+    state_file_name: coverage_state_clean_adapter.json
+    lock_file_name: train_clean_adapter.lock
+    epoch_orders_dir_name: epoch_orders_clean_adapter
+  stage2:
+    enabled: false
+    allow_full_training: true
+    dataset_path: data/prepared/train_stage2.jsonl
+    val_dataset_path: data/prepared/val_stage2.jsonl
+    gold_eval_dataset_path: data/prepared/gold_eval_stage2.jsonl
+    output_path: runs/tikz_stage2_adapter.safetensors
+    checkpoint_dir: runs/stage2_checkpoints
+    reward_cache_dir: .cache/stage2/references
+    telemetry_path: runs/stage2_checkpoints/metrics.jsonl
+    reward_model_id: gemini-3.1-flash-lite-preview
+    resume_adapter_path:
+    reward_backend: emd
+    rollout_group_size: 8
+    smoke_rollout_group_size: 2
+    learning_rate: 1.0e-05
+    max_rollout_tokens: 2048
+    smoke_max_rollout_tokens: 256
+    temperature: 1.0
+    top_p: 0.9
+    top_k: 64
+    clip_epsilon_low: 0.2
+    clip_epsilon_high: 0.28
+    beta: 0.0
+    normalize_by_max_length: true
+    scale_advantages_by_std: false
+    mask_truncated_completions: true
+    steps_per_report: 1
+    steps_per_save: 1
+    iters: 100
+    smoke_steps: 1
+    cache_reference_artifacts: true
+    reward_compile_floor: 0.655
+    reward_format_floor: 0.175
+    promotion_min_reward: 0.575
+    promotion_min_compile_rate: 0.815
+    fail_on_invalid_rollout: true
+    dead_signal_watchdog_enabled: true
+    dead_signal_watchdog_windows: 3
+    dead_signal_watchdog_min_format_reject_rate: 0.95
+    dead_signal_watchdog_min_truncated_rate: 0.95
+    rollout_debug_save_every: 1
+    rollout_debug_max_dirs: 0
+    rollout_debug_force_final_save: true
