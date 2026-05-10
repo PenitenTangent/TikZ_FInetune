@@ -17,6 +17,7 @@ def train(
     loss_fn: Any = sft_trainer.vision_language_loss_fn,
     train_on_completions: bool = False,
     assistant_id: int = 77091,
+    processor: Any = None,  # For probe
 ) -> None:
     """Run mlx-vlm SFT with optional explicit validation milestones.
 
@@ -27,6 +28,8 @@ def train(
     """
     mx = sft_trainer.mx
     nn = sft_trainer.nn
+    from .collapse_probe import run_collapse_probe
+    from .prompting import build_generation_prompt
 
     if not hasattr(args, "_tikz_eval_at"):
         sft_trainer.train(
@@ -75,7 +78,7 @@ def train(
     state = [model.state, optimizer.state, mx.random.state]
     eval_milestones = frozenset(int(x) for x in getattr(args, "_tikz_eval_at", frozenset()))
 
-    def step(batch: Any, prev_grad: Any, do_update: bool) -> tuple[Any, Any, Any]:
+    def step(batch: Any, prev_grad: Any, do_update: bool) -> tuple[Any, Any, Any, Any]:
         if "attention_mask" in batch:
             lengths = batch["attention_mask"].sum(axis=1)
         else:
@@ -86,6 +89,11 @@ def train(
 
         toks = lengths.sum()
         lvalue, grad = loss_value_and_grad(model, batch)
+        
+        # Diagnostic: compute grad norm before clipping
+        # We flatten the grad and take the norm
+        flat_grad = mx.concatenate([g.reshape(-1) for g in sft_trainer.tree_flatten(grad)])
+        grad_norm = mx.linalg.norm(flat_grad)
 
         if args.grad_clip is not None:
             grad = sft_trainer.tree_map(lambda g: mx.clip(g, -args.grad_clip, args.grad_clip), grad)
@@ -100,7 +108,7 @@ def train(
             optimizer.update(model, grad)
             grad = None
 
-        return lvalue, toks, grad
+        return lvalue, toks, grad, grad_norm
 
     model.train()
     losses = 0
@@ -109,6 +117,8 @@ def train(
     trained_tokens = 0
     train_time = 0.0
     grad_accum = None
+    grad_norms = 0.0
+    probe_fail_count = 0
 
     for it, batch in zip(
         range(1, args.iters + 1),
@@ -144,17 +154,19 @@ def train(
                 )
             tic = time.perf_counter()
 
-        lvalue, toks, grad_accum = step(batch, grad_accum, it % grad_accum_steps == 0)
+        lvalue, toks, grad_accum, g_norm = step(batch, grad_accum, it % grad_accum_steps == 0)
         mx.clear_cache()
         losses += lvalue
         n_tokens += toks
         steps += 1
-        mx.eval(state, losses, n_tokens, grad_accum)
+        grad_norms += g_norm
+        mx.eval(state, losses, n_tokens, grad_accum, grad_norms)
         train_time += time.perf_counter() - tic
 
         if it % args.steps_per_report == 0 or it == args.iters:
             train_loss = mx.distributed.all_sum(losses, stream=mx.cpu).item()
             train_loss /= steps * world_size
+            avg_grad_norm = mx.distributed.all_sum(grad_norms, stream=mx.cpu).item() / steps
             n_tokens_total = mx.distributed.all_sum(n_tokens, stream=mx.cpu).item()
             learning_rate = (
                 optimizer.learning_rate.item()
@@ -169,10 +181,9 @@ def train(
             if rank == 0:
                 print(
                     f"Iter {it}: Train loss {sft_trainer.Colors.OKGREEN}{train_loss:.8f}{sft_trainer.Colors.ENDC}, "
-                    f"Learning Rate {learning_rate:.3e}, "
-                    f"It/sec {it_sec:.3f}, "
+                    f"Grad Norm {avg_grad_norm:.4f}, "
+                    f"LR {learning_rate:.3e}, "
                     f"Tokens/sec {tokens_sec:.3f}, "
-                    f"Trained Tokens {trained_tokens}, "
                     f"Peak mem {peak_mem:.3f} GB",
                     flush=True,
                 )
@@ -180,6 +191,7 @@ def train(
             losses = 0
             n_tokens = 0
             steps = 0
+            grad_norms = 0.0
             train_time = 0.0
 
         if it % args.steps_per_save == 0 and rank == 0:
@@ -187,10 +199,29 @@ def train(
             checkpoint = Path(args.adapter_file).parent / f"{it:07d}_adapters.safetensors"
             sft_trainer.save_adapter(model, checkpoint)
             print(
-                f"{sft_trainer.Colors.OKBLUE}Iter {it}: Saved adapter weights to "
-                f"{args.adapter_file} and {checkpoint}.{sft_trainer.Colors.ENDC}",
+                f"{sft_trainer.Colors.OKBLUE}Iter {it}: Saved adapter to {checkpoint}. Running collapse probe...{sft_trainer.Colors.ENDC}",
                 flush=True,
             )
+            
+            # Upgrade 5: Online generation probe
+            if processor is not None:
+                passed, failures = run_collapse_probe(model, processor, build_generation_prompt)
+                if not passed:
+                    probe_fail_count += 1
+                    print(f"{sft_trainer.Colors.FAIL}WARNING: Collapse probe failed! ({probe_fail_count}/2){sft_trainer.Colors.ENDC}")
+                    for f in failures:
+                        print(f"  - {f['prompt']}: {', '.join(f['reasons'])}")
+                    
+                    if probe_fail_count >= 2:
+                        print(f"{sft_trainer.Colors.FAIL}FATAL: Collapse probe failed twice. Aborting training to save compute.{sft_trainer.Colors.ENDC}")
+                        sys.exit(1)
+                else:
+                    probe_fail_count = 0
+                    print(f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed.{sft_trainer.Colors.ENDC}")
+
+    if rank == 0:
+        sft_trainer.save_adapter(model, args.adapter_file)
+        print(f"{sft_trainer.Colors.OKGREEN}Saved final adapter weights to {args.adapter_file}.{sft_trainer.Colors.ENDC}")
 
     if rank == 0:
         sft_trainer.save_adapter(model, args.adapter_file)

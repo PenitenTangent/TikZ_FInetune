@@ -2592,6 +2592,7 @@ def _execute_training(
             loss_fn=loss_fn,
             train_on_completions=plan.args.train_on_completions,
             assistant_id=plan.args.assistant_id,
+            processor=processor,
         )
         return plan
     finally:

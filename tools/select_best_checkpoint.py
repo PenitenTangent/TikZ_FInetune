@@ -44,20 +44,37 @@ def _resolve_checkpoint_path(metrics: dict, eval_file: Path) -> Path | None:
     return None
 
 def checkpoint_is_eligible(metrics: dict) -> bool:
+    # Zero tolerance for contract poisoning
+    if metrics.get("preview_environment_rate", 1.0) > 0.0:
+        return False
+    if metrics.get("assistant_usepackage_rate", 1.0) > 0.0:
+        return False
+    if metrics.get("assistant_documentclass_rate", 1.0) > 0.0:
+        return False
+    if metrics.get("decorations_geometric_rate", 1.0) > 0.0:
+        return False
+        
+    # Quality minimums
     return (
         metrics.get("deterministic_loop") is False
-        and metrics.get("raw_repetition_loop_rate", 1.0) <= 0.02
+        and metrics.get("repetition_loop_rate", 1.0) <= 0.01  # Stricter repetition gate
         and metrics.get("substantive_rate", 0.0) >= 0.80
-        and metrics.get("truncation_rate", 1.0) <= 0.10
+        and metrics.get("truncation_rate", 1.0) <= 0.05      # Stricter truncation gate
+        and metrics.get("avg_code_length_ratio_vs_base", 99.0) <= 1.6  # No excessive length
     )
 
 def checkpoint_sort_key(metrics: dict):
+    # Sort order:
+    # 1. Zero repetition is prioritized
+    # 2. Highest substantive rate
+    # 3. Highest compile rate
+    # 4. Closest length ratio to 1.0
     return (
-        metrics.get("raw_repetition_loop_rate", 1.0),          # lower
-        -metrics.get("compile_rate", 0.0),                     # higher
-        -metrics.get("substantive_rate", 0.0),                 # higher
-        metrics.get("avg_code_length_ratio_vs_base", 99.0),    # lower
-        -metrics.get("step", 0),                               # later only tie-break
+        metrics.get("repetition_loop_rate", 1.0),
+        -metrics.get("substantive_rate", 0.0),
+        -metrics.get("compile_rate", 0.0),
+        abs(1.0 - metrics.get("avg_code_length_ratio_vs_base", 2.0)),
+        -metrics.get("step", 0),
     )
 
 def main():

@@ -1,0 +1,18 @@
+# High-stability recovery profile for TikZ training.
+# Use this when Rank 24/32 runs collapse or show prompt-contract poisoning.
+
+training:
+  learning_rate: 3.0e-06       # 10x lower than default Stage 1
+  lora_rank: 8                 # Lower capacity = lower risk of overfitting to noise
+  lora_alpha: 16               # Standard alpha=2*rank
+  lora_num_layers: 28
+  weight_decay: 0.1            # Higher regularization
+  steps_per_save: 50           # Save more frequently for better selection
+  steps_per_eval: 50
+  
+model:
+  max_context_tokens: 768      # Stick to verified context length
+  
+memory:
+  gradient_accumulation_steps: 8 # Higher effective batch size for smoother gradients
+  batch_size: 1
