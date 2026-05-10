@@ -230,12 +230,23 @@ def unwrap_document(text: str) -> str:
         content = stripped[env_match.start():]
         # Trim any trailing \end{document}
         content = re.sub(r"\\end\{document\}.*", "", content, flags=re.IGNORECASE | re.DOTALL)
+        # Trim anything after the last relevant TikZ environment close
+        last_closes = list(re.finditer(r"\\end\{(?:tikzpicture|tikz-cd|circuitikz|axis|tikzpicture\*)\}", content, flags=re.IGNORECASE))
+        if last_closes:
+            content = content[:last_closes[-1].end()]
         return content.strip()
         
     return stripped
 
 
 def ensure_standalone_document(text: str) -> str:
+    body = normalize_for_training_target(text)
+    packages = "\n".join(detect_required_packages(body))
+    return f"{DOCUMENT_CLASS}\n{packages}\n{DOCUMENT_BEGIN}\n{body}\n{DOCUMENT_END}"
+
+
+def normalize_for_training_target(text: str) -> str:
+    """Produces a cleaned, body-only TikZ environment string for LLM training targets."""
     # Unwrap existing document if present
     body = unwrap_document(strip_inline_comments(text))
     # Eliminate double newlines that cause paragraph break errors in TikZ parsers
@@ -250,9 +261,13 @@ def ensure_standalone_document(text: str) -> str:
     # Modernize tikzstyle to tikzset for robustness
     # Handles both \tikzstyle{name} = [style] and \tikzstyle{name} = {style}
     body = re.sub(r"\\tikzstyle\{([^}]+)\}\s*=\s*[\[{]([^\]}]+)[\]}]", r"\\tikzset{\1/.style={\2}}", body)
-
-    packages = "\n".join(detect_required_packages(body))
-    return f"{DOCUMENT_CLASS}\n{packages}\n{DOCUMENT_BEGIN}\n{body}\n{DOCUMENT_END}"
+    
+    # Apply common body-level filters
+    body = strip_default_options(body)
+    body = quantize_floats(body)
+    body = derep_duplicate_commands(body)
+    
+    return body.strip()
 
 
 # TikZ renderer defaults — these options are always active even when omitted.
@@ -366,16 +381,9 @@ def normalize_tikz(text: str) -> str:
     """Apply the full multi-pass normalization and healing pipeline to a TikZ string.
 
     This includes comment stripping, dependency removal, environment healing,
-    wrapping in a standalone document class for consistent compilation,
-    float quantization to cap coordinate precision, and DeRep statement-level
-    de-duplication of repeated draw commands.
+    wrapping in a standalone document class for consistent compilation.
     """
-    cleaned = strip_inline_comments(text)
-    cleaned = strip_external_dependency_lines(cleaned)
-    cleaned = ensure_standalone_document(cleaned)
-    cleaned = strip_default_options(cleaned)
-    cleaned = quantize_floats(cleaned)
-    return derep_duplicate_commands(cleaned)
+    return ensure_standalone_document(text)
 
 
 def extract_primary_environment(text: str) -> str | None:

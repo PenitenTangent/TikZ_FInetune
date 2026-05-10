@@ -97,9 +97,39 @@ def main():
                 skipped_sample_ids.append(sample_id)
                 continue
             
-            # Flatten structured content (list of {"type": "text", "text": "..."} dicts)
-            # to plain strings. The HF tokenizer's apply_chat_template only accepts strings
-            # as message content, not the VisionDataset-style multimodal content lists.
+            # Step 1: Prompt Contamination Preflight
+            # We look for actual usage (usually followed by { or [) rather than just mentions.
+            toxic_assistant_tokens = [
+                "\\documentclass", "\\usepackage", "\\PreviewEnvironment",
+                "\\begin{document}", "\\end{document}"
+            ]
+            toxic_user_tokens = [
+                "\\PreviewEnvironment{", "\\usepackage[active,tightpage]{preview}"
+            ]
+            
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        part.get("text", "")
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    )
+                
+                if msg["role"] == "assistant":
+                    for token in toxic_assistant_tokens:
+                        if token in content:
+                            print(f"\nERROR: Toxic token '{token}' found in assistant target for sample {sample_id}")
+                            print("Aborting. Data contract violation (prompt contamination).")
+                            sys.exit(1)
+                elif msg["role"] == "user":
+                    for token in toxic_user_tokens:
+                        if token in content:
+                            print(f"\nERROR: Toxic token '{token}' found in user prompt for sample {sample_id}")
+                            print("Aborting. Data contract violation (prompt contamination).")
+                            sys.exit(1)
+            
+            # Flatten structured content
             flat_messages = []
             for msg in messages:
                 content = msg.get("content", "")

@@ -60,7 +60,9 @@ def _format_geometry_hints(
     if geometry_hints:
         libraries = geometry_hints.get("tikz_libraries")
         if isinstance(libraries, list) and libraries:
-            lines.append("tikzlibrary: " + ", ".join(str(value) for value in libraries))
+            # Only include if not excessively long to avoid prompt copying
+            if len(libraries) <= 6:
+                lines.append("tikzlibrary: " + ", ".join(str(value) for value in libraries))
         bounding_box = geometry_hints.get("bounding_box")
         if isinstance(bounding_box, dict):
             try:
@@ -82,35 +84,22 @@ def build_generation_prompt(
     *,
     generation_mode: str | None = None,
     geometry_hints: dict[str, object] | None = None,
-    preamble: str | None = None,
 ) -> str:
     hints = _format_geometry_hints(
         generation_mode=generation_mode,
         geometry_hints=geometry_hints,
     )
-    prompt_preamble = (
-        preamble.strip()
-        if preamble is not None and preamble.strip()
-        else (
-            "\\documentclass[tikz]{standalone}\n"
-            "\\usepackage{tikz}\n"
-            "\\usetikzlibrary{positioning, arrows.meta, calc}\n"
-            "\\begin{document}"
-        )
-    )
     return (
-        "Generate a complete LaTeX document that contains a TikZ figure according to the following requirements:\n"
+        "Generate only the TikZ environment body according to the following requirements:\n"
         f"{description.strip()}\n"
         f"{hints}\n"
         "Output constraints:\n"
-        "- Continue from the markdown fence opened below and close it after the TikZ body.\n"
-        "- Use the standalone TikZ document class shown in the preamble below.\n"
-        "- Keep the preamble minimal; add packages only when required by the chosen environment.\n"
+        "- Generate only the TikZ environment body (e.g., \\begin{tikzpicture} ... \\end{tikzpicture}).\n"
+        "- Do not output a LaTeX preamble, \\documentclass, \\usepackage, or \\PreviewEnvironment.\n"
+        "- Do not output \\begin{document} or \\end{document}.\n"
+        "- Start directly with the TikZ environment and end with the matching close and the markdown fence.\n"
         "- Preserve geometric constraints from the description (coordinates, labels, and relative placement).\n"
-        "- Ensure the result is a compilable standalone document.\n"
         "- Use strict TikZ syntax: terminate paths with ';', use calc ($...$) for math.\n\n"
-        "--- Starting Preamble ---\n"
-        f"{prompt_preamble}\n"
         "```latex"
     )
 

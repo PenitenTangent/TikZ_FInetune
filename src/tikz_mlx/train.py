@@ -947,6 +947,7 @@ def build_lora_namespace(
     run_id: str,
     resume_adapter_path: Path | None = None,
     iters: int | None = None,
+    save_interval: int = 100,
 ) -> argparse.Namespace:
     dataset_name, data_files = _dataset_loader_spec(dataset_path)
     if val_dataset_path is not None:
@@ -973,7 +974,7 @@ def build_lora_namespace(
         learning_rate=config.training.learning_rate,
         steps_per_report=1 if dry_run else 10,
         steps_per_eval=1 if dry_run else config.training.steps_per_eval,
-        steps_per_save=1 if dry_run else config.training.steps_per_save,
+        steps_per_save=1 if dry_run else save_interval,
         val_batches=1 if dry_run else config.training.val_batches,
         max_seq_length=config.model.max_context_tokens,
         lora_rank=config.training.lora_rank,
@@ -1006,6 +1007,7 @@ def plan_training(
     dry_run: bool = True,
     require_full_opt_in: bool = True,
     iters: int | None = None,
+    save_interval: int = 100,
 ) -> TrainingPlan:
     ensure_runtime_directories(config)
     if require_full_opt_in:
@@ -1096,6 +1098,7 @@ def plan_training(
         run_id=resolved_run_id,
         resume_adapter_path=resume_adapter,
         iters=iters,
+        save_interval=save_interval,
     )
     return TrainingPlan(
         dataset_path=dataset,
@@ -2634,6 +2637,7 @@ def run_training(
     run_id: str | None = None,
     dry_run: bool = False,
     iters: int | None = None,
+    save_interval: int = 100,
 ) -> TrainingPlan:
     plan = plan_training(
         config,
@@ -2644,6 +2648,7 @@ def run_training(
         run_id=run_id,
         dry_run=dry_run,
         iters=iters,
+        save_interval=save_interval,
     )
     if iters is not None:
         plan.args.iters = iters

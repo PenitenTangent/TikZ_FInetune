@@ -108,6 +108,12 @@ ADAPTER_OUTPUTS=(
   "runs/tikz_stage5_adapter.safetensors"
 )
 
+# Detect dry-run mode
+DRY_RUN_FLAG=""
+if [[ "$TRAIN_EXTRA_ARGS" == *"--dry-run"* ]]; then
+  DRY_RUN_FLAG="--dry-run"
+fi
+
 config_file="${STAGES[$STAGE_NUM]}"
 if [ -n "$OVERRIDE_CONFIG" ]; then
   config_file="$OVERRIDE_CONFIG"
@@ -258,7 +264,7 @@ cmd=(
   --output-path "$adapter_output"
   --run-id "$run_id"
   --iters "$stage_iters"
-  --skip-post-ab-eval
+  --save-interval 100
 )
 
 # Determine resume behavior
@@ -337,6 +343,19 @@ echo "✓ Stage $STAGE_NUM completed successfully"
 echo "  Final adapter: $adapter_output"
 
 # Publish a stable adapter path for chaining into next stage.
+# 4. Post-training Eval Gate (Mandatory for non-dry-runs)
+if [ -z "$DRY_RUN_FLAG" ]; then
+    echo ""
+    echo "Running post-training evaluation gate..."
+    if ./tools/run_eval_gate.sh --config "$config_file" --adapter "$adapter_output"; then
+        echo "✓ Evaluation gate passed."
+    else
+        echo "ERROR: Evaluation gate failed. Adapter is quarantined."
+        exit 1
+    fi
+fi
+
+# 5. Publish adapter if successful
 PUBLISH_ON_SUCCESS_DEFAULT="1"
 case "$config_file" in
   *recovery*.yaml) PUBLISH_ON_SUCCESS_DEFAULT="0" ;;

@@ -322,6 +322,12 @@ def _evaluate_samples(
                 "substantive_features": subst_feats,
                 "token_distribution": token_feats,
                 "normalization_audit": norm_audit,
+                # New metrics
+                "has_preview_env": "\\PreviewEnvironment" in raw,
+                "has_usepackage": "\\usepackage" in raw,
+                "has_documentclass": "\\documentclass" in raw,
+                "has_decorations_geometric": "decorations.geometric" in raw,
+                "true_substantive": subst_feats.get("substantive_pass", False),
             })
 
             status = "✅ Compiled" if compile_ok else ("⚠️ Truncated" if truncated else "❌ Failed")
@@ -446,7 +452,11 @@ def _format_report(
         ("Compiled", "compile_ok"),
         ("Has TikZ env", "has_tikz_env"),
         ("Has TikZ commands", "has_tikz_cmds"),
-        ("Substantive", "substantive"),
+        ("Substantive (strict)", "true_substantive"),
+        ("Bad patterns passed", "bad_patterns_pass"),
+        ("PreviewEnvironment contamination", "has_preview_env"),
+        ("usepackage in assistant", "has_usepackage"),
+        ("decorations.geometric loop", "has_decorations_geometric"),
         ("Truncated", "truncated"),
         ("Repetition loop", "repetition_loop"),
         ("One closing fence", "closing_fence_exactly_once"),
@@ -458,11 +468,20 @@ def _format_report(
             row += f"{f'{count}/{n} ({pct:.0f}%)':>{col_width}}"
         lines.append(row)
 
-    # Avg code length
+    # Avg code length and ratio
+    base_avg_len = sum(r["code_length"] for r in all_results["base"]) / n if "base" in all_results and n else 0
+    
     row = f"{'Avg code length':<30}"
     for label in labels:
         avg = sum(r["code_length"] for r in all_results[label]) / n if n else 0
         row += f"{f'{avg:.0f} chars':>{col_width}}"
+    lines.append(row)
+    
+    row = f"{'Code length ratio vs base':<30}"
+    for label in labels:
+        avg = sum(r["code_length"] for r in all_results[label]) / n if n else 0
+        ratio = avg / base_avg_len if base_avg_len > 0 else 1.0
+        row += f"{f'{ratio:.2f}x':>{col_width}}"
     lines.append(row)
 
     lines.append("")
@@ -593,14 +612,23 @@ def run_ab_eval(
     }
     for label, results in all_results.items():
         n = len(results)
+        label_avg_len = sum(r["code_length"] for r in results) / n if n else 0
+        base_avg_len = sum(r["code_length"] for r in all_results.get("base", [])) / len(all_results.get("base", [])) if all_results.get("base") else label_avg_len
+        
         structured[label] = {
             "compile_rate": sum(1 for r in results if r["compile_ok"]) / n if n else 0,
             "render_sanity_passed_rate": sum(1 for r in results if r["render_sanity_passed"]) / n if n else 0,
-            "substantive_rate": sum(1 for r in results if r["substantive"]) / n if n else 0,
+            "substantive_rate": sum(1 for r in results if r["true_substantive"]) / n if n else 0,
+            "bad_pattern_pass_rate": sum(1 for r in results if r["bad_patterns_pass"]) / n if n else 0,
+            "preview_environment_rate": sum(1 for r in results if r["has_preview_env"]) / n if n else 0,
+            "assistant_usepackage_rate": sum(1 for r in results if r["has_usepackage"]) / n if n else 0,
+            "assistant_documentclass_rate": sum(1 for r in results if r["has_documentclass"]) / n if n else 0,
+            "decorations_geometric_rate": sum(1 for r in results if r["has_decorations_geometric"]) / n if n else 0,
             "truncation_rate": sum(1 for r in results if r["truncated"]) / n if n else 0,
             "repetition_loop_rate": sum(1 for r in results if r["repetition_loop"]) / n if n else 0,
             "closing_fence_exactly_once_rate": sum(1 for r in results if r["closing_fence_exactly_once"]) / n if n else 0,
-            "avg_code_length": sum(r["code_length"] for r in results) / n if n else 0,
+            "avg_code_length": label_avg_len,
+            "avg_code_length_ratio_vs_base": label_avg_len / base_avg_len if base_avg_len > 0 else 1.0,
         }
     (output_root / "results.json").write_text(
         json.dumps(structured, indent=2), encoding="utf-8"

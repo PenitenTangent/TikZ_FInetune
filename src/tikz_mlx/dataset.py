@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
+from .normalization_audit import normalize_with_audit
+from .normalize import normalize_for_training_target
 from .prompting import build_generation_prompt
 from .schemas import Stage2Sample, TikzSample
 
@@ -105,31 +107,15 @@ def sample_to_training_record(sample: TikzSample) -> dict:
         raise ValueError("Training sample must include a description.")
 
     metadata, generation_mode, geometry_hints = enrich_training_metadata(sample)
-    code = sample.normalized_code
-
-    match = re.search(r"\\begin\{document\}\n?", code)
-    if match:
-        split_idx = match.end()
-        preamble = code[:split_idx]
-        body = code[split_idx:]
-        if body.endswith("\\end{document}"):
-            body = body[:-14]
-        elif body.endswith("\\end{document}\n"):
-            body = body[:-15]
-        prompt = build_generation_prompt(
-            sample.description,
-            generation_mode=generation_mode,
-            geometry_hints=geometry_hints,
-            preamble=preamble,
-        )
-        assistant_text = body.strip() + "\n```\n"
-    else:
-        prompt = build_generation_prompt(
-            sample.description,
-            generation_mode=generation_mode,
-            geometry_hints=geometry_hints,
-        )
-        assistant_text = code.strip() + "\n```\n"
+    # Use the new body-only normalization
+    body = normalize_for_training_target(sample.normalized_code)
+    
+    prompt = build_generation_prompt(
+        sample.description,
+        generation_mode=generation_mode,
+        geometry_hints=geometry_hints,
+    )
+    assistant_text = body.strip() + "\n```\n"
 
     return {
         "sample_id": sample.sample_id,
