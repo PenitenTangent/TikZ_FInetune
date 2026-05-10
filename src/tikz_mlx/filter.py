@@ -43,6 +43,10 @@ def validate_normalized_code(normalized_code: str, config: DatasetConfig) -> Fil
 
 
 def build_sample(source: str, raw_code: str, description: str | None, config: DatasetConfig) -> tuple[TikzSample | None, FilterDecision]:
+    # Early rejection of external dependencies in raw source to prevent prompt/code mismatch
+    if config.reject_external_dependencies and contains_external_dependencies(raw_code):
+        return None, FilterDecision(accepted=False, reasons=["external dependencies present in raw source"])
+
     normalized_code = normalize_tikz(raw_code)
     decision = validate_normalized_code(normalized_code, config)
     if not decision.accepted:

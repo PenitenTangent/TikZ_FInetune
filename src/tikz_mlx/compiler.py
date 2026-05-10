@@ -70,6 +70,10 @@ class CompilerService:
 
         work_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp(prefix="tikz_compile_"))
         work_dir.mkdir(parents=True, exist_ok=True)
+        # Delete stale artifacts to prevent false positives
+        for suffix in [".pdf", ".log", ".aux", ".tex"]:
+            (work_dir / f"{job_name}{suffix}").unlink(missing_ok=True)
+
         tex_path = work_dir / f"{job_name}.tex"
         pdf_path = work_dir / f"{job_name}.pdf"
         log_path = work_dir / f"{job_name}.log"

@@ -210,6 +210,12 @@ def prepare_hf_dataset(
             )
             token_lengths.append(token_length)
             truncated_records += int(is_truncated)
+
+            if is_truncated and config.dataset.drop_truncated_records:
+                total_rejected += 1
+                _increment_reason(rejected_reasons, "truncated_context")
+                continue
+
             stage2_record = sample_to_stage2_record(sample)
             train_handle.write(json.dumps(train_record, ensure_ascii=True) + "\n")
             stage2_handle.write(json.dumps(stage2_record, ensure_ascii=True) + "\n")

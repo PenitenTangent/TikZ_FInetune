@@ -15,6 +15,8 @@ BAD_PATTERN_RULES = [
     Rule("assistant_usepackage", pattern=r"\\usepackage", max_count=0),
     Rule("assistant_documentclass", pattern=r"\\documentclass", max_count=0),
     Rule("opening_latex_fence", pattern=r"```latex", max_count=0),
+    Rule("repeated_draw_node_excessive", pattern=r"\\(?:draw|node|path)", max_count=100),
+    Rule("consecutive_backslashes", pattern=r"\\{4,}", max_count=0),
 ]
 
 def check_bad_patterns(text: str) -> Dict[str, Any]:

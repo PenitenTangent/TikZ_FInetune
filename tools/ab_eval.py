@@ -61,7 +61,7 @@ CMD_RE = re.compile(
 # ── Adapter resolution ──────────────────────────────────────────────────────
 
 
-def _resolve_adapter_dir(adapter_path: str) -> str:
+def _resolve_adapter_dir(adapter_path: str) -> tuple[str, Any]:
     """Resolve adapter path to a directory that mlx_vlm.load() accepts.
 
     mlx_vlm expects adapter_path to be a directory containing:
@@ -75,7 +75,7 @@ def _resolve_adapter_dir(adapter_path: str) -> str:
 
     # If it's already a directory, use it directly
     if p.is_dir():
-        return str(p)
+        return str(p), None
 
     # It's a .safetensors file — find the directory with adapter_config.json
     parent = p.parent
@@ -85,23 +85,20 @@ def _resolve_adapter_dir(adapter_path: str) -> str:
     if config_file.exists():
         # If the file is already named adapters.safetensors, just return parent
         if p.name == "adapters.safetensors":
-            return str(parent)
+            return str(parent), None
         # Otherwise, create a symlink so mlx_vlm can find it
         import tempfile, shutil
-        tmp_dir = Path(tempfile.mkdtemp(prefix="ab_eval_adapter_"))
+        tmp_dir_obj = tempfile.TemporaryDirectory(prefix="ab_eval_adapter_")
+        tmp_dir = Path(tmp_dir_obj.name)
         shutil.copy2(config_file, tmp_dir / "adapter_config.json")
         (tmp_dir / "adapters.safetensors").symlink_to(p.resolve())
-        return str(tmp_dir)
+        return str(tmp_dir), tmp_dir_obj
 
-    # No adapter_config.json found — create a minimal one
-    import tempfile
-    tmp_dir = Path(tempfile.mkdtemp(prefix="ab_eval_adapter_"))
-    (tmp_dir / "adapters.safetensors").symlink_to(p.resolve())
-    (tmp_dir / "adapter_config.json").write_text(
-        json.dumps({"lora_layers": 16, "lora_targets": "all"}),
-        encoding="utf-8",
+    # No adapter_config.json found — fail hard per security review
+    raise RuntimeError(
+        f"Missing adapter_config.json next to adapter checkpoint: {p}. "
+        "Refusing to evaluate with guessed LoRA metadata."
     )
-    return str(tmp_dir)
 
 
 # ── Data loading ────────────────────────────────────────────────────────────
@@ -249,91 +246,96 @@ def _evaluate_samples(
 
     # mlx_vlm.load expects adapter_path to be a DIRECTORY containing
     # adapter_config.json and adapters.safetensors (or *.safetensors).
-    resolved_adapter = _resolve_adapter_dir(adapter_path) if adapter_path else None
+    resolved_adapter, adapter_temp_dir = _resolve_adapter_dir(adapter_path) if adapter_path else (None, None)
 
-    model, processor = load(
-        cfg.model.model_id,
-        adapter_path=resolved_adapter,
-        processor_config={"trust_remote_code": True},
-    )
-
-    results = []
-    for i, sample in enumerate(samples):
-        raw = _generate(model, processor, cfg, sample["prompt_text"], max_tokens)
-        # Extract telemetry BEFORE normalization
-        bad_pats = check_bad_patterns(raw)
-        subst_feats = substantive_features(raw)
-        token_feats = token_distribution_features(raw)
-
-        # Normalize with audit
-        latex_only = extract_latex_from_response(raw)
-        compilable, norm_audit = normalize_with_audit(latex_only)
-
-        has_env = bool(ENV_RE.search(compilable))
-        has_cmd = bool(CMD_RE.search(compilable))
-        substantive = has_env and has_cmd
-
-        # Save generated files
-        sample_dir = out_dir / label / f"sample_{i:03d}"
-        sample_dir.mkdir(parents=True, exist_ok=True)
-        (sample_dir / "raw_response.txt").write_text(raw, encoding="utf-8")
-        (sample_dir / "compilable.tex").write_text(compilable, encoding="utf-8")
-
-        compile_ok = False
-        compile_status = "not_attempted"
-        render_sanity_passed = False
-        if substantive:
-            summary = compiler.compile_document(
-                compilable, output_dir=sample_dir, job_name="output"
-            )
-            compile_ok = summary.pdf_path is not None and Path(summary.pdf_path).exists()
-            compile_status = summary.status.value
-            
-            if compile_ok and summary.pdf_path:
-                sanity_res = check_render_sanity(summary.pdf_path)
-                render_sanity_passed = sanity_res.get("sanity_passed", False)
-                
-        # Check for truncation (missing closing environment)
-        truncated = False
-        if has_env and not re.search(
-            r"\\end\{(?:tikzpicture|tikz-cd|circuitikz|axis)\}", compilable
-        ):
-            truncated = True
-        repetition_loop = _has_repetition_loop(raw) or _has_repetition_loop(compilable)
-        closing_fence_exactly_once = raw.count("```") == 1
-
-        results.append({
-            "i": i,
-            "sample_id": sample["sample_id"],
-            "raw_length": len(raw),
-            "code_length": len(compilable),
-            "has_tikz_env": has_env,
-            "has_tikz_cmds": has_cmd,
-            "substantive": substantive,
-            "compile_ok": compile_ok,
-            "compile_status": compile_status,
-            "render_sanity_passed": render_sanity_passed,
-            "truncated": truncated,
-            "repetition_loop": repetition_loop,
-            "closing_fence_exactly_once": closing_fence_exactly_once,
-            "compilable_code": compilable,
-            "raw_response": raw,
-            "bad_patterns_pass": bad_pats["pass"],
-            "bad_pattern_violations": bad_pats["violations"],
-            "substantive_features": subst_feats,
-            "token_distribution": token_feats,
-            "normalization_audit": norm_audit,
-        })
-
-        status = "✅ Compiled" if compile_ok else ("⚠️ Truncated" if truncated else "❌ Failed")
-        print(f"  [{i+1}/{len(samples)}] {sample['sample_id'][:16]} — {status} ({len(compilable)} chars)", flush=True)
-
-    # Unload model to free memory
-    del model, processor
     try:
-        import_mlx_core().clear_cache()
-    except Exception:
-        pass
+        model, processor = load(
+            cfg.model.model_id,
+            adapter_path=resolved_adapter,
+            processor_config={"trust_remote_code": True},
+        )
+
+        results = []
+        for i, sample in enumerate(samples):
+            raw = _generate(model, processor, cfg, sample["prompt_text"], max_tokens)
+            # Extract telemetry BEFORE normalization
+            bad_pats = check_bad_patterns(raw)
+            subst_feats = substantive_features(raw)
+            token_feats = token_distribution_features(raw)
+
+            # Normalize with audit
+            latex_only = extract_latex_from_response(raw)
+            compilable, norm_audit = normalize_with_audit(latex_only)
+
+            has_env = bool(ENV_RE.search(compilable))
+            has_cmd = bool(CMD_RE.search(compilable))
+            substantive = has_env and has_cmd
+
+            # Save generated files
+            sample_dir = out_dir / label / f"sample_{i:03d}"
+            sample_dir.mkdir(parents=True, exist_ok=True)
+            (sample_dir / "raw_response.txt").write_text(raw, encoding="utf-8")
+            (sample_dir / "compilable.tex").write_text(compilable, encoding="utf-8")
+
+            compile_ok = False
+            compile_status = "not_attempted"
+            render_sanity_passed = False
+            if substantive:
+                summary = compiler.compile_document(
+                    compilable, output_dir=sample_dir, job_name="candidate"
+                )
+                from tikz_mlx.schemas import CompileStatus
+                compile_ok = summary.status == CompileStatus.SUCCESS
+                compile_status = summary.status.value
+                
+                if compile_ok and summary.pdf_path:
+                    sanity_res = check_render_sanity(summary.pdf_path)
+                    render_sanity_passed = sanity_res.get("sanity_passed", False)
+                    
+            # Check for truncation (missing closing environment)
+            truncated = False
+            if has_env and not re.search(
+                r"\\end\{(?:tikzpicture|tikz-cd|circuitikz|axis)\}", compilable
+            ):
+                truncated = True
+            repetition_loop = _has_repetition_loop(raw) or _has_repetition_loop(compilable)
+            closing_fence_exactly_once = raw.count("```") == 1
+
+            results.append({
+                "i": i,
+                "sample_id": sample["sample_id"],
+                "raw_length": len(raw),
+                "code_length": len(compilable),
+                "has_tikz_env": has_env,
+                "has_tikz_cmds": has_cmd,
+                "substantive": substantive,
+                "compile_ok": compile_ok,
+                "compile_status": compile_status,
+                "render_sanity_passed": render_sanity_passed,
+                "truncated": truncated,
+                "repetition_loop": repetition_loop,
+                "closing_fence_exactly_once": closing_fence_exactly_once,
+                "compilable_code": compilable,
+                "raw_response": raw,
+                "bad_patterns_pass": bad_pats["pass"],
+                "bad_pattern_violations": bad_pats["violations"],
+                "substantive_features": subst_feats,
+                "token_distribution": token_feats,
+                "normalization_audit": norm_audit,
+            })
+
+            status = "✅ Compiled" if compile_ok else ("⚠️ Truncated" if truncated else "❌ Failed")
+            print(f"  [{i+1}/{len(samples)}] {sample['sample_id'][:16]} — {status} ({len(compilable)} chars)", flush=True)
+
+        # Unload model to free memory
+        del model, processor
+        try:
+            import_mlx_core().clear_cache()
+        except Exception:
+            pass
+    finally:
+        if adapter_temp_dir:
+            adapter_temp_dir.cleanup()
 
     return results
 

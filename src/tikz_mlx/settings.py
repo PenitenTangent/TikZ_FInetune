@@ -188,6 +188,7 @@ class DatasetConfig:
     supported_environments: tuple[str, ...]
     reject_external_dependencies: bool
     deduplicate: bool
+    drop_truncated_records: bool
 
     @classmethod
     def from_mapping(cls, mapping: dict[str, Any]) -> "DatasetConfig":
@@ -210,6 +211,7 @@ class DatasetConfig:
             supported_environments=supported_environments,
             reject_external_dependencies=bool(mapping["reject_external_dependencies"]),
             deduplicate=bool(mapping["deduplicate"]),
+            drop_truncated_records=bool(mapping.get("drop_truncated_records", False)),
         )
 
 

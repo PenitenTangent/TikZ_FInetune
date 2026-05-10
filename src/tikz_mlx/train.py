@@ -2436,6 +2436,18 @@ def _execute_training(
                 return
 
             checkpoint_path = Path(adapter_file).expanduser().resolve()
+            
+            # Ensure adapter_config.json exists next to the checkpoint for MLX-VLM compatibility
+            adapter_config_path = checkpoint_path.parent / "adapter_config.json"
+            adapter_config = {
+                "rank": config.training.lora_rank,
+                "alpha": config.training.lora_alpha,
+                "dropout": config.training.lora_dropout,
+                "lora_layers": config.training.lora_num_layers,
+                "target_modules": ["q_proj", "v_proj"],
+            }
+            adapter_config_path.write_text(json.dumps(adapter_config, indent=2), encoding="utf-8")
+
             if not checkpoint_path.exists():
                 return
 

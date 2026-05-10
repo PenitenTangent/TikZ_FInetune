@@ -1,6 +1,6 @@
 PYTHON ?= python3
 PACKAGE = tikz_mlx
-CONFIG ?= configs/lora_prod.yaml
+CONFIG ?= configs/curriculum_stage1.yaml
 DESCRIPTION ?= Draw a simple labeled triangle with black edges and vertex labels A, B, and C.
 OUTDIR ?= outputs/example
 DATASET_ID ?= nllg/DaTikZ-V4
@@ -11,10 +11,13 @@ TRAIN_DATASET ?= data/prepared/train_unified.jsonl
 VAL_DATASET ?= data/prepared/val_unified.jsonl
 RESUME_OUTPUT ?= runs/tikz_lora_adapter_full_resume.safetensors
 
-.PHONY: install prep check-dataset prep-dataset split-dataset infer train train-resume-latest train-stage2 full-finetune test
+.PHONY: install install-alignment prep check-dataset prep-dataset split-dataset infer train train-resume-latest train-stage2 full-finetune test
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
+
+install-alignment:
+	$(PYTHON) -m pip install -e ".[dev,alignment]"
 
 prep:
 	$(PYTHON) -m $(PACKAGE).cli validate-config --config $(CONFIG)
