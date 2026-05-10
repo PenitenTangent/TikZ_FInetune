@@ -4,7 +4,7 @@
 
 set -e
 
-PROJECT_ROOT="/Users/andrisoueslati/Code/TikZ"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.."; pwd)"
 cd "$PROJECT_ROOT"
 
 if [ -f ".venv/bin/activate" ]; then
@@ -33,6 +33,7 @@ OVERRIDE_CONFIG=""
 RESUME_FROM=""
 ALLOW_IMPLICIT_RESUME="${ALLOW_IMPLICIT_RESUME:-0}"
 ALLOW_QUARANTINED="${ALLOW_QUARANTINED:-0}"
+SKIP_DATA_GATES="${SKIP_DATA_GATES:-0}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -58,6 +59,10 @@ while [ $# -gt 0 ]; do
       ;;
     --allow-quarantined)
       ALLOW_QUARANTINED="1"
+      shift
+      ;;
+    --skip-data-gates)
+      SKIP_DATA_GATES="1"
       shift
       ;;
     *)
@@ -165,6 +170,43 @@ if [ -d "$checkpoint_dir" ]; then
   latest_checkpoint=$(ls -t "$checkpoint_dir"/*_adapters.safetensors 2>/dev/null | head -1)
 fi
 
+# ── Data quality gates ───────────────────────────────────────────────────────
+# Run the mandatory pre-training data pipeline unless explicitly skipped.
+# Set SKIP_DATA_GATES=1 or pass --skip-data-gates for resumption workflows where
+# data was already gated on a prior invocation.
+STAGE_TRAIN_JSONL=""
+for candidate in \
+    "data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl" \
+    "data/prepared/curriculum/gates/stage${STAGE_NUM}/train_stage${STAGE_NUM}_clean.jsonl" \
+    "data/prepared/train.jsonl"; do
+  if [ -f "$candidate" ]; then
+    STAGE_TRAIN_JSONL="$candidate"
+    break
+  fi
+done
+
+VAL_FLAG=""
+GOLD_FLAG=""
+if [ -f "data/prepared/val.jsonl" ];       then VAL_FLAG="--val data/prepared/val.jsonl"; fi
+if [ -f "data/prepared/gold_eval.jsonl" ]; then GOLD_FLAG="--gold data/prepared/gold_eval.jsonl"; fi
+
+if [ "$SKIP_DATA_GATES" = "1" ]; then
+  echo "WARNING: Skipping data gates (SKIP_DATA_GATES=1 / --skip-data-gates)."
+elif [ -z "$STAGE_TRAIN_JSONL" ]; then
+  echo "WARNING: No training dataset found for stage $STAGE_NUM; skipping data gates."
+  echo "         Expected: data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl"
+else
+  echo "Running data quality gates for Stage $STAGE_NUM on: $STAGE_TRAIN_JSONL"
+  # shellcheck disable=SC2086
+  bash tools/run_data_gates.sh \
+    --stage "$STAGE_NUM" \
+    --input "$STAGE_TRAIN_JSONL" \
+    $VAL_FLAG $GOLD_FLAG || {
+      echo "ERROR: Data gates failed for Stage $STAGE_NUM. Aborting training."
+      exit 1
+    }
+fi
+
 # Build training command
 cmd=(
   "$PYTHON_EXE" -u -m tikz_mlx.cli train
@@ -185,10 +227,21 @@ if [ -n "$RESUME_FROM" ]; then
   cmd+=(--resume-adapter "$RESUME_FROM")
   
   if [ "$ALLOW_QUARANTINED" != "1" ]; then
-      "$PYTHON_EXE" -c "import sys; from pathlib import Path; sys.path.insert(0, '$PROJECT_ROOT/src'); from tikz_mlx.quarantine import assert_not_quarantined; assert_not_quarantined(Path('$RESUME_FROM'))" || {
+      "$PYTHON_EXE" - <<'PY' "$RESUME_FROM" "$PROJECT_ROOT"
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2] + "/src")
+from tikz_mlx.quarantine import assert_not_quarantined
+adapter = Path(sys.argv[1])
+# Handle both file and directory adapter paths
+if adapter.is_dir():
+    adapter = adapter / "adapters.safetensors"
+assert_not_quarantined(adapter)
+PY
+      if [ $? -ne 0 ]; then
           echo "ERROR: Attempted to resume from a quarantined adapter!"
           exit 1
-      }
+      fi
   fi
 elif [ "$RESUME_FLAG" == "--resume" ]; then
   if [ "$STAGE_NUM" -ge 4 ] && [ "$ALLOW_IMPLICIT_RESUME" != "1" ]; then

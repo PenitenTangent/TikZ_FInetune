@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Dict, Any
 
@@ -67,6 +68,8 @@ def main():
     parser.add_argument("--clean", required=True, help="Path to clean dataset stats JSON")
     parser.add_argument("--probe", required=False, help="Path to probe dataset stats JSON")
     parser.add_argument("--out", required=True, help="Path to output diff JSON")
+    parser.add_argument("--fail-on-warning", action="store_true",
+                        help="Exit with code 1 if any warnings are generated")
     args = parser.parse_args()
     
     raw_stats = load_audit(Path(args.raw))
@@ -79,6 +82,16 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(diff, f, indent=2)
+
+    if diff["warnings"]:
+        print(f"Dataset diff warnings ({len(diff['warnings'])}):", file=sys.stderr)
+        for w in diff["warnings"]:
+            print(f"  WARNING: {w}", file=sys.stderr)
+        if args.fail_on_warning:
+            print("Aborting: dataset diff has warnings and --fail-on-warning is set.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("Dataset diff OK — no warnings.")
 
 if __name__ == "__main__":
     main()

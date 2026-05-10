@@ -26,23 +26,52 @@ def _ids_sha256(values: list[str]) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Pre-tokenize a JSONL dataset for TikZ finetuning.")
-    parser.add_argument("--model-id", type=str, required=True, help="Model ID to load processor from.")
+    parser.add_argument("--model-id", type=str, required=False, help="Model ID to load processor from.")
+    parser.add_argument("--config", type=str, required=False,
+                        help="Path to a curriculum stage YAML config. When provided, model_id and "
+                             "max_context_tokens are read from the config and override --model-id / --max-tokens.")
     parser.add_argument("--dataset", type=str, required=True, help="Path to JSONL dataset.")
     parser.add_argument("--output", type=str, required=True, help="Path to save tokenized data (.npy).")
-    parser.add_argument("--max-tokens", type=int, default=2048, help="Max tokens for truncation (optional).")
+    parser.add_argument("--max-tokens", type=int, default=None,
+                        help="Max tokens for truncation. Defaults to model.max_context_tokens from --config, or 2048.")
     parser.add_argument("--prompt-contract-version", default="tikz_partial_decode_v1")
     parser.add_argument("--normalization-config-hash", default="")
     parser.add_argument("--disabled-rules", default="", help="Comma-separated disabled normalization/filter rules.")
     
     args = parser.parse_args()
+
+    # Load config-driven overrides
+    config_model_id: str | None = None
+    config_max_tokens: int | None = None
+    if args.config:
+        import yaml
+        with open(args.config, encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh)
+        config_model_id = cfg.get("model", {}).get("model_id")
+        config_max_tokens = int(cfg.get("model", {}).get("max_context_tokens", 2048))
+        print(f"[config] Loaded from {args.config}: model_id={config_model_id}, max_context_tokens={config_max_tokens}")
+
+    model_id: str = args.model_id or config_model_id or ""
+    if not model_id:
+        print("Error: provide --model-id or --config with a model.model_id.", file=sys.stderr)
+        sys.exit(1)
+
+    # max-tokens precedence: explicit CLI > config > default 2048
+    if args.max_tokens is not None:
+        effective_max_tokens = args.max_tokens
+    elif config_max_tokens is not None:
+        effective_max_tokens = config_max_tokens
+    else:
+        effective_max_tokens = 2048
+    print(f"[pretokenize] Effective max_tokens: {effective_max_tokens}")
     
     # Use AutoTokenizer directly — mlx_vlm.load_processor always attempts to load
     # a video_preprocessor_config.json that doesn't exist for text-only models,
     # producing a spurious WARNING on every run.
     from transformers import AutoTokenizer
 
-    print(f"Loading tokenizer for {args.model_id}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
+    print(f"Loading tokenizer for {model_id}...")
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
     dataset_path = pathlib.Path(args.dataset)
     if not dataset_path.exists():
@@ -97,7 +126,7 @@ def main():
                 truncation=False,
             )
 
-            if args.max_tokens and len(token_ids) > args.max_tokens:
+            if effective_max_tokens and len(token_ids) > effective_max_tokens:
                 skipped_sample_ids.append(sample_id)
                 continue
 
@@ -130,9 +159,9 @@ def main():
         "skipped_row_count": len(skipped_sample_ids),
         "kept_sample_ids_sha256": _ids_sha256(kept_sample_ids),
         "skipped_sample_ids": skipped_sample_ids,
-        "model_id": args.model_id,
-        "tokenizer_id": args.model_id,
-        "max_tokens": args.max_tokens,
+        "model_id": model_id,
+        "tokenizer_id": model_id,
+        "max_tokens": effective_max_tokens,
         "prompt_contract_version": PROMPT_CONTRACT_VERSION,
         "prompt_template_sha256": prompt_template_sha256(),
         "chat_template_sha256": hashlib.sha256((tokenizer.chat_template or "").encode("utf-8")).hexdigest() if hasattr(tokenizer, "chat_template") else None,

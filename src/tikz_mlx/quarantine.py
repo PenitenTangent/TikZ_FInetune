@@ -20,6 +20,14 @@ def assert_not_quarantined(adapter_path: Path, allow: bool = False) -> None:
         
     if not adapter_path.exists():
         return
+
+    # Handle directory adapter paths: look for the weights file inside
+    if adapter_path.is_dir():
+        adapter_file = adapter_path / "adapters.safetensors"
+        if not adapter_file.exists():
+            return  # Nothing to check
+    else:
+        adapter_file = adapter_path
         
     # Standard location
     manifest_path = Path("runs/quarantine_manifest.json")
@@ -30,7 +38,7 @@ def assert_not_quarantined(adapter_path: Path, allow: bool = False) -> None:
         
     # Compute sha256
     hasher = hashlib.sha256()
-    with adapter_path.open("rb") as f:
+    with adapter_file.open("rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             hasher.update(chunk)
             

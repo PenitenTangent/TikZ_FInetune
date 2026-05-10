@@ -1,5 +1,7 @@
 import argparse
+import hashlib
 import json
+import re
 import sys
 import glob
 from pathlib import Path
@@ -7,6 +9,39 @@ from pathlib import Path
 def load_metrics(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+def _sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+def _resolve_checkpoint_path(metrics: dict, eval_file: Path) -> Path | None:
+    """Try to find the actual adapter weights path for an eval record.
+
+    Priority order:
+    1. ``checkpoint_path`` field embedded in the eval JSON.
+    2. Inferred from the eval filename step number: looks for
+       ``{step:06d}_adapters.safetensors`` in the parent of the eval dir.
+    """
+    if "checkpoint_path" in metrics:
+        p = Path(metrics["checkpoint_path"])
+        if p.exists():
+            return p
+
+    # Attempt filename-based inference: eval files live in e.g.
+    # runs/curriculum_stage4/eval_checkpoints/ckpt_000500.json
+    # The adapter is at runs/curriculum_stage4/000500_adapters.safetensors
+    m = re.search(r"(\d{4,})", eval_file.stem)
+    if m:
+        step = int(m.group(1))
+        # Walk up to find candidate checkpoint dirs (parent of eval_checkpoints/)
+        for candidate_dir in [eval_file.parent, eval_file.parent.parent]:
+            candidate = candidate_dir / f"{step:06d}_adapters.safetensors"
+            if candidate.exists():
+                return candidate
+    return None
 
 def checkpoint_is_eligible(metrics: dict) -> bool:
     return (
@@ -57,7 +92,9 @@ def main():
     if not eligible:
         print("Warning: NO checkpoints are eligible for promotion!", file=sys.stderr)
         out_payload = {
-            "selected_checkpoint": None,
+            "selected_checkpoint_path": None,
+            "selected_adapter_sha256": None,
+            "eligible": False,
             "selected_step": None,
             "reason": "No checkpoints met the strict promotion gates.",
             "metrics": None,
@@ -67,24 +104,42 @@ def main():
         # Sort eligible
         eligible.sort(key=checkpoint_sort_key)
         best = eligible[0]
-        
-        # We need to map back to the checkpoint directory from the eval file
-        # typically runs/curriculum_stage4/eval_checkpoints/ckpt_050.json -> runs/curriculum_stage4/checkpoint_000050
-        # Wait, the user didn't specify exactly how to map it. We will just output the step and the source file.
-        
+        eval_file = Path(best["_source_file"])
+
+        checkpoint_path = _resolve_checkpoint_path(best, eval_file)
+        adapter_sha256 = None
+        if checkpoint_path is not None:
+            try:
+                adapter_sha256 = _sha256(checkpoint_path)
+            except OSError:
+                checkpoint_path = None
+
+        if checkpoint_path is None:
+            print(
+                f"Warning: Could not resolve checkpoint file for step {best.get('step')} "
+                f"(eval: {eval_file}). Embed 'checkpoint_path' in the eval JSON to fix this.",
+                file=sys.stderr,
+            )
+
         out_payload = {
-            "selected_checkpoint_eval_file": best["_source_file"],
+            "selected_checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
+            "selected_adapter_sha256": adapter_sha256,
+            "eligible": True,
             "selected_step": best.get("step"),
             "reason": "Best candidate passing promotion gates",
             "metrics": best,
             "all_candidates": all_candidates
         }
-        print(f"Selected step {best.get('step')} from {best['_source_file']}")
+        print(f"Selected step {best.get('step')} → {checkpoint_path or '(path unknown)'}")
         
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(out_payload, f, indent=2)
+
+    # Non-zero exit if no eligible checkpoint was found
+    if not out_payload["eligible"]:
+        sys.exit(1)
         
 if __name__ == "__main__":
     main()
