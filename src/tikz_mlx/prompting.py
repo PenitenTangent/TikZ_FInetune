@@ -6,19 +6,37 @@ import hashlib
 
 from .schemas import CompileSummary
 
-PROMPT_CONTRACT_VERSION = "tikz_partial_decode_v2"
+PROMPT_CONTRACT_VERSION = "tikz_body_only_v3"
 
 def stable_json_sha256(payload: dict) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 def prompt_template_sha256() -> str:
+    # Serialize the actual body-only prompt template so that
+    # any change to the prompt text invalidates cached tokenizations.
+    body_only_template = (
+        "Generate only the TikZ environment body according to the following requirements:\n"
+        "{description}\n"
+        "{hints}\n"
+        "Output constraints:\n"
+        "- Generate only the TikZ environment body (e.g., \\begin{tikzpicture} ... \\end{tikzpicture}).\n"
+        "- Do not output a LaTeX preamble, \\documentclass, \\usepackage, or \\PreviewEnvironment.\n"
+        "- Do not output \\begin{document} or \\end{document}.\n"
+        "- Start directly with the TikZ environment and end with the matching close and the markdown fence.\n"
+        "- Preserve geometric constraints from the description (coordinates, labels, and relative placement).\n"
+        "- Use strict TikZ syntax: terminate paths with ';', use calc ($...$) for math.\n\n"
+        "```latex"
+    )
     payload = {
         "contract_version": PROMPT_CONTRACT_VERSION,
-        "template": "Generate a complete LaTeX document that contains a TikZ figure according to the following requirements...",
+        "template": body_only_template,
         "rules": [
-            "assistant role completion only after opened latex fence",
-            "strict TikZ syntax"
+            "body_only_environment",
+            "no_preamble",
+            "no_document_wrapper",
+            "assistant_starts_with_tikz_env",
+            "assistant_ends_with_closing_fence",
         ]
     }
     return stable_json_sha256(payload)

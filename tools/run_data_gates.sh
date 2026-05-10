@@ -7,11 +7,13 @@
 #       --val data/prepared/val.jsonl --gold data/prepared/gold_eval.jsonl
 #
 # What it does (in order, all abort on failure):
-#   1. filter_training_records   — drop bad-pattern / low-substantive records
-#   2. audit_training_records    — compute stats on raw and clean datasets
-#   3. diff_dataset_audits       — compare raw vs clean, fail on warnings
-#   4. validate_split_integrity  — ensure no ID / target-hash leakage
-#   5. pretokenize_dataset       — tokenize with max_tokens from stage config
+#   0.  audit_prompt_contract    — hard-fail if gold eval JSONL is poisoned
+#   1.  filter_training_records  — drop bad-pattern / low-substantive records
+#   1.5 audit_prompt_contract    — hard-fail if clean JSONL is poisoned
+#   2.  audit_training_records   — compute stats on raw and clean datasets
+#   3.  diff_dataset_audits      — compare raw vs clean, fail on warnings
+#   4.  validate_split_integrity — ensure no ID / target-hash leakage
+#   5.  pretokenize_dataset      — tokenize with max_tokens from stage config
 #
 # Outputs are written to data/prepared/curriculum/gates/<stage>/ by default,
 # or to --clean-output and --pretok-output paths if provided.
@@ -85,6 +87,16 @@ echo "  Config:  $CONFIG"
 echo "  Gates:   $GATE_DIR"
 echo ""
 
+# ── Gate 0: Contract audit on gold eval ─────────────────────────────────────
+if [ -n "$GOLD_JSONL" ] && [ -f "$GOLD_JSONL" ]; then
+  echo ">>> [0/5] Auditing gold eval prompt contract..."
+  "$PYTHON_EXE" tools/audit_prompt_contract.py \
+    --input "$GOLD_JSONL" \
+    --fail
+  echo "    ✓ Gold eval contract audit passed"
+  echo ""
+fi
+
 # ── Gate 1: Filter ──────────────────────────────────────────────────────────
 echo ">>> [1/5] Filtering training records..."
 "$PYTHON_EXE" tools/filter_training_records.py \
@@ -92,6 +104,14 @@ echo ">>> [1/5] Filtering training records..."
   --output "$CLEAN_JSONL" \
   --rejected "$REJECTED_JSONL"
 echo "    ✓ Filter complete → $CLEAN_JSONL"
+
+# ── Gate 1.5: Contract audit on clean JSONL ──────────────────────────────────
+echo ""
+echo ">>> [1.5/5] Auditing clean JSONL prompt contract..."
+"$PYTHON_EXE" tools/audit_prompt_contract.py \
+  --input "$CLEAN_JSONL" \
+  --fail
+echo "    ✓ Clean JSONL contract audit passed"
 
 # ── Gate 2: Audit (raw + clean) ─────────────────────────────────────────────
 echo ""

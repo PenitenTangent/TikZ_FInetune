@@ -1,73 +1,120 @@
 #!/usr/bin/env python3
+"""Enforce relative + absolute promotion thresholds on A/B eval results.
+
+Requires both 'base' and 'finetuned' (or --variant) to be present in results.json.
+Uses relative thresholds anchored to base model performance, preventing promotion
+of a model that is worse than base even if it clears absolute minimums.
+"""
+from __future__ import annotations
+
 import argparse
 import json
 import sys
 from pathlib import Path
 
-def main():
-    parser = argparse.ArgumentParser(description="Enforce hard quality gates on TikZ eval results.")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Enforce promotion gate on TikZ eval results.")
     parser.add_argument("--eval-dir", required=True, help="Directory containing results.json")
     parser.add_argument("--variant", default="finetuned", help="Variant to check (default: finetuned)")
+    parser.add_argument("--base-variant", default="base", help="Base variant key (default: base)")
     args = parser.parse_args()
 
     results_path = Path(args.eval_dir) / "results.json"
     if not results_path.exists():
-        print(f"Error: {results_path} not found.")
+        print(f"ERROR: {results_path} not found.", file=sys.stderr)
         sys.exit(1)
 
-    with results_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    with results_path.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
 
     if args.variant not in data:
-        print(f"Error: Variant '{args.variant}' not found in results.json.")
+        print(f"ERROR: Variant '{args.variant}' not found in results.json.", file=sys.stderr)
         sys.exit(1)
 
-    metrics = data[args.variant]
-    
-    # Thresholds
-    thresholds = {
-        "bad_pattern_pass_rate": 1.0,
-        "preview_environment_rate": 0.0,
-        "assistant_usepackage_rate": 0.0,
-        "raw_repetition_loop_rate": 0.02, # Allow tiny fraction of loops if others are perfect
-        "compile_rate_min": 0.3,
-        "substantive_rate_min": 0.75,
-        "avg_code_length_ratio_max": 2.5
-    }
+    m = data[args.variant]
+    base = data.get(args.base_variant, {})
 
-    violations = []
+    violations: list[str] = []
 
-    if metrics.get("bad_pattern_pass_rate", 0) < thresholds["bad_pattern_pass_rate"]:
-        violations.append(f"bad_pattern_pass_rate: {metrics['bad_pattern_pass_rate']} < {thresholds['bad_pattern_pass_rate']}")
+    # ── Zero-tolerance: collapse signals ──────────────────────────────────────
+    # Any nonzero rate here is an immediate failure.
+    for metric in [
+        "preview_environment_rate",
+        "assistant_usepackage_rate",
+        "assistant_documentclass_rate",
+        "decorations_geometric_rate",
+        "repetition_loop_rate",
+    ]:
+        val = m.get(metric, 0.0)
+        if val > 0.0:
+            violations.append(f"{metric}: {val:.4f} > 0.0  (zero tolerance)")
 
-    if metrics.get("preview_environment_rate", 1) > thresholds["preview_environment_rate"]:
-        violations.append(f"preview_environment_rate: {metrics['preview_environment_rate']} > {thresholds['preview_environment_rate']}")
+    # ── Bad-pattern pass rate must be 100% ────────────────────────────────────
+    bpp = m.get("bad_pattern_pass_rate", 0.0)
+    if bpp < 1.0:
+        violations.append(f"bad_pattern_pass_rate: {bpp:.4f} < 1.0")
 
-    if metrics.get("assistant_usepackage_rate", 1) > thresholds["assistant_usepackage_rate"]:
-        violations.append(f"assistant_usepackage_rate: {metrics['assistant_usepackage_rate']} > {thresholds['assistant_usepackage_rate']}")
+    # ── Closing fence: 95%+ must close exactly once ───────────────────────────
+    fence_rate = m.get("closing_fence_exactly_once_rate", 0.0)
+    if fence_rate < 0.95:
+        violations.append(f"closing_fence_exactly_once_rate: {fence_rate:.4f} < 0.95")
 
-    if metrics.get("repetition_loop_rate", 1) > thresholds["raw_repetition_loop_rate"]:
-        violations.append(f"repetition_loop_rate: {metrics['repetition_loop_rate']} > {thresholds['raw_repetition_loop_rate']}")
+    # ── Code length ratio vs base ─────────────────────────────────────────────
+    length_ratio = m.get("avg_code_length_ratio_vs_base", 999.0)
+    if length_ratio > 1.6:
+        violations.append(f"avg_code_length_ratio_vs_base: {length_ratio:.3f} > 1.6")
 
-    if metrics.get("compile_rate", 0) < thresholds["compile_rate_min"]:
-        violations.append(f"compile_rate: {metrics['compile_rate']} < {thresholds['compile_rate_min']}")
+    # ── Relative compile rate ──────────────────────────────────────────────────
+    base_compile = base.get("compile_rate", None)
+    cand_compile = m.get("compile_rate", 0.0)
+    if base_compile is not None:
+        # Candidate must be >= 80% of base, with an absolute floor of 70%
+        rel_min = max(0.70, 0.80 * base_compile)
+        if cand_compile < rel_min:
+            violations.append(
+                f"compile_rate: {cand_compile:.3f} < {rel_min:.3f} "
+                f"(80% of base={base_compile:.3f}, floor=0.70)"
+            )
+    else:
+        # No base available — use absolute floor
+        if cand_compile < 0.70:
+            violations.append(f"compile_rate: {cand_compile:.3f} < 0.70 (no base; absolute floor)")
 
-    if metrics.get("substantive_rate", 0) < thresholds["substantive_rate_min"]:
-        violations.append(f"substantive_rate: {metrics['substantive_rate']} < {thresholds['substantive_rate_min']}")
+    # ── Relative substantive rate ──────────────────────────────────────────────
+    base_subst = base.get("substantive_rate", None)
+    cand_subst = m.get("substantive_rate", 0.0)
+    if base_subst is not None:
+        rel_min_s = max(0.85, 0.90 * base_subst)
+        if cand_subst < rel_min_s:
+            violations.append(
+                f"substantive_rate: {cand_subst:.3f} < {rel_min_s:.3f} "
+                f"(90% of base={base_subst:.3f}, floor=0.85)"
+            )
+    else:
+        if cand_subst < 0.85:
+            violations.append(f"substantive_rate: {cand_subst:.3f} < 0.85 (no base; absolute floor)")
 
-    if metrics.get("avg_code_length_ratio_vs_base", 10) > thresholds["avg_code_length_ratio_max"]:
-        violations.append(f"avg_code_length_ratio_vs_base: {metrics['avg_code_length_ratio_vs_base']} > {thresholds['avg_code_length_ratio_max']}")
+    # ── Candidate must not be worse than base on repetition / bad patterns ─────
+    if base:
+        base_rep = base.get("repetition_loop_rate", 0.0)
+        if m.get("repetition_loop_rate", 0.0) > base_rep:
+            violations.append(
+                f"repetition_loop_rate: {m.get('repetition_loop_rate', 0):.4f} "
+                f"> base={base_rep:.4f}"
+            )
 
-    result = {
+    # ── Save results ───────────────────────────────────────────────────────────
+    gate_result = {
         "pass": len(violations) == 0,
         "violations": violations,
-        "metrics": metrics
+        "candidate_metrics": m,
+        "base_metrics": base,
     }
-
     gate_path = Path(args.eval_dir) / "promotion_gate_result.json"
-    gate_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    gate_path.write_text(json.dumps(gate_result, indent=2), encoding="utf-8")
 
-    if result["pass"]:
+    if gate_result["pass"]:
         print("✅ Promotion gate passed.")
         sys.exit(0)
     else:
@@ -75,6 +122,7 @@ def main():
         for v in violations:
             print(f"  - {v}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

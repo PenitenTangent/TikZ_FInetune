@@ -217,7 +217,7 @@ def _load_and_validate_pack_audit(
 
 
 def _verify_cache_audit(cache_path: Path, config: PipelineConfig, is_packed: bool = False) -> dict[str, Any]:
-    from .prompting import PROMPT_CONTRACT_VERSION
+    from .prompting import PROMPT_CONTRACT_VERSION, prompt_template_sha256
     
     audit_path = cache_path.with_name(cache_path.stem + "_audit.json")
     if not audit_path.exists():
@@ -230,22 +230,43 @@ def _verify_cache_audit(cache_path: Path, config: PipelineConfig, is_packed: boo
             audit = json.load(f)
     except Exception as e:
         raise RuntimeError(f"Failed to read cache audit {audit_path}: {e}")
-        
+    
+    # 1. Prompt contract version
     if "prompt_contract_version" in audit:
         if audit["prompt_contract_version"] != PROMPT_CONTRACT_VERSION:
             raise RuntimeError(
                 f"Stale pretokenized cache detected! "
-                f"Expected contract {PROMPT_CONTRACT_VERSION}, got {audit['prompt_contract_version']}. "
+                f"Expected contract {PROMPT_CONTRACT_VERSION!r}, got {audit['prompt_contract_version']!r}. "
                 "Re-run pretokenization/packing."
             )
-            
-    # Also verify model_id
+    
+    # 2. Prompt template sha256 (catches prompt changes without a version bump)
+    expected_sha = prompt_template_sha256()
+    if "prompt_template_sha256" in audit:
+        if audit["prompt_template_sha256"] != expected_sha:
+            raise RuntimeError(
+                "Stale pretokenized cache: prompt_template_sha256 mismatch. "
+                f"Expected {expected_sha}, got {audit['prompt_template_sha256']}. "
+                "Re-run pretokenization."
+            )
+    
+    # 3. Model / tokenizer ID
     cached_model_id = audit.get("model_id") or audit.get("tokenizer_id")
     if cached_model_id and cached_model_id != config.model.model_id:
         raise RuntimeError(
-            f"Stale cache model mismatch. Expected {config.model.model_id}, got {cached_model_id}."
+            f"Stale cache model mismatch. Expected {config.model.model_id!r}, got {cached_model_id!r}."
         )
-        
+    
+    # 4. Max tokens (if present in audit and config)
+    if "max_tokens" in audit:
+        audit_max = int(audit["max_tokens"])
+        config_max = int(config.model.max_context_tokens or 2048)
+        if audit_max != config_max:
+            raise RuntimeError(
+                f"Stale cache max_tokens mismatch. Expected {config_max}, got {audit_max}. "
+                "Re-run pretokenization."
+            )
+    
     return audit
 
 
