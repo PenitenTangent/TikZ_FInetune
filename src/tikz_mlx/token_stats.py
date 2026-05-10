@@ -3,7 +3,7 @@ from collections import Counter
 from typing import Dict, Any, Tuple, Optional
 
 COMMAND_RE = re.compile(r"\\[A-Za-z@]+")
-COORD_RE = re.compile(r"\((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)")
+COORD_RE = re.compile(r"\(\s*\{?[-+]?[0-9]*\.?[0-9]+\}?\s*,\s*\{?[-+]?[0-9]*\.?[0-9]+\}?\s*\)")
 
 BAD_PATTERNS = {
     "preview_environment": r"\\PreviewEnvironment",

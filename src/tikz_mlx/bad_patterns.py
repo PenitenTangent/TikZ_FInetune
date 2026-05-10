@@ -9,7 +9,7 @@ class Rule:
     max_count: int
 
 BAD_PATTERN_RULES = [
-    Rule("repeated_preview_environment", pattern=r"\\PreviewEnvironment", max_count=1),
+    Rule("repeated_preview_environment", pattern=r"\\PreviewEnvironment", max_count=0),
     Rule("zero_geometric", pattern=r"0\.geometric", max_count=0),
     Rule("decorations_geometric_loop", pattern=r"decorations\.geometric", max_count=5),
     Rule("assistant_usepackage", pattern=r"\\usepackage", max_count=0),

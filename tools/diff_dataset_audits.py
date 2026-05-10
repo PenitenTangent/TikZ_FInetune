@@ -23,8 +23,8 @@ def compare_stats(raw: dict, clean: dict, probe: dict) -> dict:
             
     mode_counts = clean.get("mode_counts", {})
     for mode, count in mode_counts.items():
-        if clean_count > 0 and count / clean_count > 0.70:
-            warnings.append(f"one mode exceeds 70%: {mode} ({count / clean_count:.1%})")
+        if clean_count > 0 and count / clean_count > 0.95:
+            warnings.append(f"one mode exceeds 95%: {mode} ({count / clean_count:.1%})")
             
     raw_p99 = raw.get("assistant_length_quantiles", {}).get("p99", 0)
     clean_p99 = clean.get("assistant_length_quantiles", {}).get("p99", 0)

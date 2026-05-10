@@ -63,7 +63,7 @@ def main():
                 reject_reasons = []
                 if not bad_pats["pass"]:
                     reject_reasons.append("bad_patterns")
-                subst_score = substantive.get("score", 0.0)
+                subst_score = substantive["substantive_score"]
                 if not substantive["substantive_pass"] or subst_score < SUBSTANTIVE_THRESHOLD:
                     reject_reasons.append(f"insufficient_substantive_score:{subst_score:.3f}<{SUBSTANTIVE_THRESHOLD}")
                 if b_score > 5.0: # Arbitrary high boilerplate threshold

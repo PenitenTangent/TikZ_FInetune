@@ -205,9 +205,24 @@ PY
 eval "$config_paths"
 
 VAL_FLAG=""
-if [ -n "$VAL_JSONL" ] && [ -f "$VAL_JSONL" ];  then VAL_FLAG="--val $VAL_JSONL"; fi
+if [ -n "$VAL_JSONL" ]; then
+  if [ -f "$VAL_JSONL" ]; then
+    VAL_FLAG="--val $VAL_JSONL"
+  else
+    echo "ERROR: configured val_dataset_path does not exist: $VAL_JSONL"
+    exit 1
+  fi
+fi
+
 GOLD_FLAG=""
-if [ -n "$GOLD_JSONL" ] && [ -f "$GOLD_JSONL" ]; then GOLD_FLAG="--gold $GOLD_JSONL"; fi
+if [ -n "$GOLD_JSONL" ]; then
+  if [ -f "$GOLD_JSONL" ]; then
+    GOLD_FLAG="--gold $GOLD_JSONL"
+  else
+    echo "ERROR: configured gold_eval_dataset_path does not exist: $GOLD_JSONL"
+    exit 1
+  fi
+fi
 
 # Ensure we don't try to pretokenize if no path is set in config
 SKIP_PRETOKENIZE_FLAG=""

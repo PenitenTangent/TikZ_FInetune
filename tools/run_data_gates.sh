@@ -13,7 +13,8 @@
 #   4. validate_split_integrity  — ensure no ID / target-hash leakage
 #   5. pretokenize_dataset       — tokenize with max_tokens from stage config
 #
-# Outputs are written to data/prepared/curriculum/gates/<stage>/.
+# Outputs are written to data/prepared/curriculum/gates/<stage>/ by default,
+# or to --clean-output and --pretok-output paths if provided.
 
 set -euo pipefail
 
