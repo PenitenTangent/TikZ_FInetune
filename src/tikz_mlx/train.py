@@ -266,7 +266,19 @@ def _verify_cache_audit(cache_path: Path, config: PipelineConfig, is_packed: boo
                 f"Stale cache max_tokens mismatch. Expected {config_max}, got {audit_max}. "
                 "Re-run pretokenization."
             )
-    
+            
+    # 5. Source JSONL SHA256 (prevents using cache from different data)
+    source_path = config.training.dataset_path
+    if source_path and "source_jsonl_sha256" in audit:
+        live_sha = _file_sha256(source_path)
+        recorded_sha = audit["source_jsonl_sha256"]
+        if live_sha != recorded_sha:
+            raise RuntimeError(
+                f"Stale cache source data mismatch for {source_path.name}. "
+                f"Expected SHA256 {live_sha}, got {recorded_sha}. "
+                "Re-run pretokenization."
+            )
+            
     return audit
 
 

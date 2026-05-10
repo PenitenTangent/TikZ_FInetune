@@ -30,11 +30,15 @@ import sys
 from pathlib import Path
 
 # Patterns that indicate ACTUAL USAGE in the user prompt (not mere mention).
-# We use suffix patterns: \\PreviewEnvironment{ is usage, but \\PreviewEnvironment. is just text.
-PROMPT_FORBIDDEN = [
-    "\\PreviewEnvironment{",             # actual \\PreviewEnvironment{tikzpicture}
-    "\\usepackage[active,tightpage]{preview}",  # verbatim preview package
-    "--- Starting Preamble ---",         # old contract preamble section header
+# We use regexes to catch usage like \documentclass{ but ignore "Do not output \documentclass"
+PROMPT_FORBIDDEN_USAGE_RE = [
+    re.compile(r"\\documentclass(?:\[[^\]]*\])?\{"),
+    re.compile(r"\\usepackage(?:\[[^\]]*\])?\{"),
+    re.compile(r"\\usetikzlibrary\{"),
+    re.compile(r"\\begin\{document\}"),
+    re.compile(r"\\end\{document\}"),
+    re.compile(r"\\PreviewEnvironment\{"),
+    re.compile(r"--- Starting Preamble ---"),
 ]
 
 # Patterns that must NOT appear in the assistant target (even as partial strings)
@@ -86,6 +90,13 @@ def audit_file(path: Path) -> dict:
             counts["record_count"] += 1
             sample_id = str(record.get("sample_id", f"row_{counts['record_count']}"))
 
+            # Check metadata
+            metadata = record.get("metadata", {})
+            if metadata.get("prompt_contract_version") != "tikz_body_only_v3":
+                counts["violation_sample_ids"].append(sample_id)
+                counts["total_violations"] += 1
+                continue
+
             messages = record.get("messages", [])
             record_has_violation = False
 
@@ -94,10 +105,11 @@ def audit_file(path: Path) -> dict:
                 text = _extract_text(msg)
 
                 if role == "user":
-                    for token in PROMPT_FORBIDDEN:
-                        if token in text:
-                            counts["prompt_violations"][token] = (
-                                counts["prompt_violations"].get(token, 0) + 1
+                    for rex in PROMPT_FORBIDDEN_USAGE_RE:
+                        if rex.search(text):
+                            pat = rex.pattern
+                            counts["prompt_violations"][pat] = (
+                                counts["prompt_violations"].get(pat, 0) + 1
                             )
                             record_has_violation = True
 

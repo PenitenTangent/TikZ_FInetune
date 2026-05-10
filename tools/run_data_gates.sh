@@ -87,13 +87,22 @@ echo "  Config:  $CONFIG"
 echo "  Gates:   $GATE_DIR"
 echo ""
 
-# ── Gate 0: Contract audit on gold eval ─────────────────────────────────────
+# ── Gate 0: Contract audit on gold eval & val ──────────────────────────────
 if [ -n "$GOLD_JSONL" ] && [ -f "$GOLD_JSONL" ]; then
   echo ">>> [0/5] Auditing gold eval prompt contract..."
   "$PYTHON_EXE" tools/audit_prompt_contract.py \
     --input "$GOLD_JSONL" \
     --fail
   echo "    ✓ Gold eval contract audit passed"
+  echo ""
+fi
+
+if [ -n "$VAL_JSONL" ] && [ -f "$VAL_JSONL" ]; then
+  echo ">>> [0.5/5] Auditing validation prompt contract..."
+  "$PYTHON_EXE" tools/audit_prompt_contract.py \
+    --input "$VAL_JSONL" \
+    --fail
+  echo "    ✓ Validation contract audit passed"
   echo ""
 fi
 

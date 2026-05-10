@@ -114,7 +114,7 @@ def build_generation_prompt(
         "Output constraints:\n"
         "- Generate only the TikZ environment body (e.g., \\begin{tikzpicture} ... \\end{tikzpicture}).\n"
         "- Do not output a LaTeX preamble, \\documentclass, \\usepackage, or \\PreviewEnvironment.\n"
-        "- Do not output \\begin{document} or \\end{document}.\n"
+        "- Do not output a LaTeX document environment (begin/end document).\n"
         "- Start directly with the TikZ environment and end with the matching close and the markdown fence.\n"
         "- Preserve geometric constraints from the description (coordinates, labels, and relative placement).\n"
         "- Use strict TikZ syntax: terminate paths with ';', use calc ($...$) for math.\n\n"

@@ -43,8 +43,7 @@ echo "========================================="
 "$PYTHON_EXE" tools/ab_eval.py \
   --config "$CONFIG" \
   --adapter-path "$ADAPTER" \
-  --num-samples "$NUM_SAMPLES" \
-  --seed 42 \
+  --sentinel-manifest "data/manifests/sentinel_32.json" \
   --max-tokens 2048 \
   --out-dir "$EVAL_DIR"
 
@@ -73,6 +72,7 @@ if [ "$GATE_PASSED" -eq 0 ]; then
     # Copy gate result
     cp "$EVAL_DIR/promotion_gate_result.json" "$BUNDLE_DIR/metrics.json" 2>/dev/null || true
     cp "$EVAL_DIR/results.json" "$BUNDLE_DIR/results.json" 2>/dev/null || true
+    cp "$EVAL_DIR/worst_cases.json" "$BUNDLE_DIR/worst_cases.json" 2>/dev/null || true
     
     echo "❌ Gate FAILED. Failure bundle written to: $BUNDLE_DIR"
     

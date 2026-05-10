@@ -13,6 +13,7 @@ if [ -f ".venv/bin/activate" ]; then
 else
   PYTHON_EXE="${PYTHON_EXE:-python3}"
 fi
+export PYTHON_EXE
 export PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Check arguments
@@ -237,7 +238,11 @@ if [ -z "$PRETOK_OUT" ]; then
 fi
 
 if [ "$SKIP_DATA_GATES" = "1" ]; then
-  echo "WARNING: Skipping data gates (SKIP_DATA_GATES=1 / --skip-data-gates)."
+  if [ "${ALLOW_SKIP_DATA_GATES:-0}" != "1" ]; then
+    echo "ERROR: --skip-data-gates requires ALLOW_SKIP_DATA_GATES=1 environment variable."
+    exit 1
+  fi
+  echo "WARNING: Skipping data gates as requested (ALLOW_SKIP_DATA_GATES=1)."
 elif [ -z "$STAGE_TRAIN_JSONL" ]; then
   echo "ERROR: No raw training dataset found for stage $STAGE_NUM."
   echo "       Expected one of: data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl"
