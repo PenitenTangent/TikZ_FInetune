@@ -116,21 +116,30 @@ def main():
 
         if checkpoint_path is None:
             print(
-                f"Warning: Could not resolve checkpoint file for step {best.get('step')} "
-                f"(eval: {eval_file}). Embed 'checkpoint_path' in the eval JSON to fix this.",
+                f"Warning: Metrics passed, but could not resolve checkpoint file for step {best.get('step')} "
+                f"(eval: {eval_file}). Promotion aborted.",
                 file=sys.stderr,
             )
-
-        out_payload = {
-            "selected_checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
-            "selected_adapter_sha256": adapter_sha256,
-            "eligible": True,
-            "selected_step": best.get("step"),
-            "reason": "Best candidate passing promotion gates",
-            "metrics": best,
-            "all_candidates": all_candidates
-        }
-        print(f"Selected step {best.get('step')} → {checkpoint_path or '(path unknown)'}")
+            out_payload = {
+                "selected_checkpoint_path": None,
+                "selected_adapter_sha256": None,
+                "eligible": False,
+                "selected_step": best.get("step"),
+                "reason": "Metrics passed, but checkpoint file could not be resolved.",
+                "metrics": best,
+                "all_candidates": all_candidates
+            }
+        else:
+            out_payload = {
+                "selected_checkpoint_path": str(checkpoint_path),
+                "selected_adapter_sha256": adapter_sha256,
+                "eligible": True,
+                "selected_step": best.get("step"),
+                "reason": "Best candidate passing promotion gates",
+                "metrics": best,
+                "all_candidates": all_candidates
+            }
+            print(f"Selected step {best.get('step')} → {checkpoint_path}")
         
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

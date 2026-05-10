@@ -175,9 +175,11 @@ fi
 # Set SKIP_DATA_GATES=1 or pass --skip-data-gates for resumption workflows where
 # data was already gated on a prior invocation.
 STAGE_TRAIN_JSONL=""
+# Try to find the original raw/source training file for this stage.
+# Typically data/prepared/curriculum/train_stageN.jsonl (raw)
 for candidate in \
     "data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl" \
-    "data/prepared/curriculum/gates/stage${STAGE_NUM}/train_stage${STAGE_NUM}_clean.jsonl" \
+    "data/prepared/train_stage${STAGE_NUM}.jsonl" \
     "data/prepared/train.jsonl"; do
   if [ -f "$candidate" ]; then
     STAGE_TRAIN_JSONL="$candidate"
@@ -185,22 +187,49 @@ for candidate in \
   fi
 done
 
+# Read expected clean paths from config
+config_paths=$( "$PYTHON_EXE" - <<'PY' "$config_file"
+import yaml, sys
+with open(sys.argv[1]) as f:
+    c = yaml.safe_load(f)
+t = c.get('training', {})
+def get_p(k):
+    v = t.get(k)
+    return str(v) if v is not None else ""
+print(f"CLEAN_JSONL='{get_p('dataset_path')}'")
+print(f"PRETOK_OUT='{get_p('pretokenized_cache_path')}'")
+print(f"VAL_JSONL='{get_p('val_dataset_path')}'")
+print(f"GOLD_JSONL='{get_p('gold_eval_dataset_path')}'")
+PY
+)
+eval "$config_paths"
+
 VAL_FLAG=""
+if [ -n "$VAL_JSONL" ] && [ -f "$VAL_JSONL" ];  then VAL_FLAG="--val $VAL_JSONL"; fi
 GOLD_FLAG=""
-if [ -f "data/prepared/val.jsonl" ];       then VAL_FLAG="--val data/prepared/val.jsonl"; fi
-if [ -f "data/prepared/gold_eval.jsonl" ]; then GOLD_FLAG="--gold data/prepared/gold_eval.jsonl"; fi
+if [ -n "$GOLD_JSONL" ] && [ -f "$GOLD_JSONL" ]; then GOLD_FLAG="--gold $GOLD_JSONL"; fi
+
+# Ensure we don't try to pretokenize if no path is set in config
+SKIP_PRETOKENIZE_FLAG=""
+if [ -z "$PRETOK_OUT" ]; then
+  SKIP_PRETOKENIZE_FLAG="--skip-pretokenize"
+fi
 
 if [ "$SKIP_DATA_GATES" = "1" ]; then
   echo "WARNING: Skipping data gates (SKIP_DATA_GATES=1 / --skip-data-gates)."
 elif [ -z "$STAGE_TRAIN_JSONL" ]; then
-  echo "WARNING: No training dataset found for stage $STAGE_NUM; skipping data gates."
-  echo "         Expected: data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl"
+  echo "ERROR: No raw training dataset found for stage $STAGE_NUM."
+  echo "       Expected one of: data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl"
+  exit 1
 else
   echo "Running data quality gates for Stage $STAGE_NUM on: $STAGE_TRAIN_JSONL"
   # shellcheck disable=SC2086
   bash tools/run_data_gates.sh \
     --stage "$STAGE_NUM" \
     --input "$STAGE_TRAIN_JSONL" \
+    --clean-output "$CLEAN_JSONL" \
+    --pretok-output "$PRETOK_OUT" \
+    $SKIP_PRETOKENIZE_FLAG \
     $VAL_FLAG $GOLD_FLAG || {
       echo "ERROR: Data gates failed for Stage $STAGE_NUM. Aborting training."
       exit 1

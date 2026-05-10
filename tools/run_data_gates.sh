@@ -33,6 +33,8 @@ STAGE_NUM=""
 INPUT_JSONL=""
 VAL_JSONL=""
 GOLD_JSONL=""
+CLEAN_JSONL_OVERRIDE=""
+PRETOK_OUT_OVERRIDE=""
 SKIP_PRETOKENIZE="0"
 
 while [ $# -gt 0 ]; do
@@ -41,6 +43,8 @@ while [ $# -gt 0 ]; do
     --input)    INPUT_JSONL="${2:?--input requires a path}"; shift 2 ;;
     --val)      VAL_JSONL="${2:?--val requires a path}";   shift 2 ;;
     --gold)     GOLD_JSONL="${2:?--gold requires a path}"; shift 2 ;;
+    --clean-output)  CLEAN_JSONL_OVERRIDE="${2:?--clean-output requires a path}"; shift 2 ;;
+    --pretok-output) PRETOK_OUT_OVERRIDE="${2:?--pretok-output requires a path}"; shift 2 ;;
     --skip-pretokenize) SKIP_PRETOKENIZE="1"; shift ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -63,13 +67,13 @@ fi
 GATE_DIR="data/prepared/curriculum/gates/stage${STAGE_NUM}"
 mkdir -p "$GATE_DIR"
 
-CLEAN_JSONL="${GATE_DIR}/train_stage${STAGE_NUM}_clean.jsonl"
+CLEAN_JSONL="${CLEAN_JSONL_OVERRIDE:-${GATE_DIR}/train_stage${STAGE_NUM}_clean.jsonl}"
 REJECTED_JSONL="${GATE_DIR}/train_stage${STAGE_NUM}_rejected.jsonl"
 RAW_AUDIT="${GATE_DIR}/audit_raw.json"
 CLEAN_AUDIT="${GATE_DIR}/audit_clean.json"
 DIFF_OUT="${GATE_DIR}/diff_raw_vs_clean.json"
 INTEGRITY_OUT="${GATE_DIR}/split_integrity.json"
-PRETOK_OUT="${GATE_DIR}/train_stage${STAGE_NUM}_clean_tokenized.npy"
+PRETOK_OUT="${PRETOK_OUT_OVERRIDE:-${GATE_DIR}/train_stage${STAGE_NUM}_clean_tokenized.npy}"
 
 echo ""
 echo "========================================="

@@ -42,6 +42,7 @@ from .dataset import (
 )
 from .model_io import clear_mlx_cache, configure_wired_limit, prepare_adapter_for_mlx_vlm
 from .mlx_runtime import import_mlx_core, import_mlx_nn
+from .quarantine import assert_not_quarantined
 from .schemas import CompileStatus
 from .settings import PipelineConfig, ensure_runtime_directories, require_training_opt_in
 from .sft_train_milestones import train as train_sft_with_milestone_eval
@@ -1019,6 +1020,8 @@ def plan_training(
         if resume_adapter_path is not None
         else config.training.resume_adapter_path
     )
+    if resume_adapter is not None:
+        assert_not_quarantined(resume_adapter)
 
     warnings: list[str] = []
     if not dataset.exists():
