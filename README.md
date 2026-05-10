@@ -171,3 +171,4 @@ The default production config leaves reward weighting off only until a scored da
 
 Evaluation and reward scoring now load pinned rasterization settings from `configs/render_config.yaml`. This keeps the Phase B visual metric on a fixed rendering path instead of relying on machine-local defaults.
 # TikZ_FInetune
+# TikZ_FInetune
