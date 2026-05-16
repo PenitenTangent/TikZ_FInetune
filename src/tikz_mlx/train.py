@@ -1703,6 +1703,8 @@ def _vision_language_loss_fn_with_marker_sequences(
     repetition_unlikelihood_weight: float = 0.0,
     repetition_unlikelihood_window: int = 64,
     repetition_unlikelihood_min_context: int = 16,
+    repetition_unlikelihood_warmup_steps: int = 0,
+    global_step: int | None = None,
 ) -> Any:
     mx = import_mlx_core()
     nn = import_mlx_nn()
@@ -1797,7 +1799,20 @@ def _vision_language_loss_fn_with_marker_sequences(
         ce = ce * syntax_weight
     ce = ce * effective_mask
     loss = ce.sum() / mx.maximum(effective_mask.sum(), 1)
-    if repetition_unlikelihood_enabled and repetition_unlikelihood_weight > 0.0:
+
+    repetition_weight = float(repetition_unlikelihood_weight)
+    warmup_steps = int(repetition_unlikelihood_warmup_steps)
+    if warmup_steps > 0 and global_step is not None:
+        try:
+            step_value = int(global_step)
+        except Exception:
+            step_value = 0
+        if step_value <= 0:
+            repetition_weight = 0.0
+        elif step_value < warmup_steps:
+            repetition_weight = repetition_weight * (float(step_value) / float(warmup_steps))
+
+    if repetition_unlikelihood_enabled and repetition_weight > 0.0:
         repetition_loss = _repetition_unlikelihood_loss(
             logits=logits,
             labels=labels,
@@ -1805,7 +1820,7 @@ def _vision_language_loss_fn_with_marker_sequences(
             window=repetition_unlikelihood_window,
             min_context=repetition_unlikelihood_min_context,
         )
-        loss = loss + (float(repetition_unlikelihood_weight) * repetition_loss)
+        loss = loss + (repetition_weight * repetition_loss)
     return loss
 
 
@@ -1835,25 +1850,57 @@ def _repetition_unlikelihood_loss(
 
     total = mx.array(0.0, dtype=mx.float32)
     count = mx.array(0.0, dtype=mx.float32)
-    max_offset = min(int(window), seq_len - 1)
+
+    # (1) Immediate token-repeat penalty: discourage emitting the previous token
+    # again when it's not the gold target.
+    prev_token = mx.pad(
+        labels[:, :-1],
+        [(0, 0), (1, 0)],
+        mode="constant",
+        constant_values=0,
+    )
+    offset_mask = (positions >= 1).astype(mx.float32)
+    non_target_mask = (prev_token != labels).astype(mx.float32)
+    valid_mask = effective_mask * position_mask * offset_mask * non_target_mask
+    candidate_probs = mx.take_along_axis(
+        probs,
+        mx.expand_dims(prev_token, axis=-1),
+        axis=-1,
+    ).squeeze(-1)
+    penalty = -mx.log(mx.maximum(1.0 - candidate_probs, 1e-6))
+    total = total + mx.sum(penalty * valid_mask)
+    count = count + mx.sum(valid_mask)
+
+    # (2) Bigram continuation penalty: for the current previous token, penalize
+    # tokens that have already followed that token in the recent window.
+    prev_tokens = prev_token
+    max_offset = min(int(window), seq_len - 2)
     for offset in range(1, max_offset + 1):
-        previous_labels = mx.pad(
+        context_prev = mx.pad(
+            labels[:, : -(offset + 1)],
+            [(0, 0), (offset + 1, 0)],
+            mode="constant",
+            constant_values=0,
+        )
+        candidate_tokens = mx.pad(
             labels[:, :-offset],
             [(0, 0), (offset, 0)],
             mode="constant",
             constant_values=0,
         )
-        offset_mask = (positions >= offset).astype(mx.float32)
-        non_target_mask = (previous_labels != labels).astype(mx.float32)
-        valid_mask = effective_mask * position_mask * offset_mask * non_target_mask
+        offset_mask = (positions >= (offset + 1)).astype(mx.float32)
+        match_mask = (context_prev == prev_tokens).astype(mx.float32)
+        non_target_mask = (candidate_tokens != labels).astype(mx.float32)
+        valid_mask = effective_mask * position_mask * offset_mask * match_mask * non_target_mask
         candidate_probs = mx.take_along_axis(
             probs,
-            mx.expand_dims(previous_labels, axis=-1),
+            mx.expand_dims(candidate_tokens, axis=-1),
             axis=-1,
         ).squeeze(-1)
         penalty = -mx.log(mx.maximum(1.0 - candidate_probs, 1e-6))
         total = total + mx.sum(penalty * valid_mask)
         count = count + mx.sum(valid_mask)
+
     return total / mx.maximum(count, 1.0)
 
 
@@ -2725,6 +2772,22 @@ def _execute_training(
             run_dir_for_named / "gradient_clip_telemetry.jsonl"
         )
 
+        if config.training.max_seq_length_schedule:
+            max_scheduled = max(length for _, length in config.training.max_seq_length_schedule)
+            if max_scheduled > int(training_args.max_seq_length):
+                raise RuntimeError(
+                    "training.max_seq_length_schedule requests a max_seq_length larger than model.max_context_tokens: "
+                    f"scheduled_max={max_scheduled}, configured_max_context_tokens={training_args.max_seq_length}."
+                )
+        training_args._tikz_max_seq_length_schedule = config.training.max_seq_length_schedule
+
+        training_args._tikz_collapse_probe_enabled = bool(config.training.collapse_probe.enabled)
+        training_args._tikz_collapse_probe_interval_steps = int(config.training.collapse_probe.interval_steps)
+        training_args._tikz_collapse_probe_max_failures = int(config.training.collapse_probe.max_failures)
+        training_args._tikz_collapse_probe_save_checkpoint_on_pass = bool(
+            config.training.collapse_probe.save_checkpoint_on_pass
+        )
+
         checkpoint_dir = Path(plan.args.output_path).expanduser().resolve().parent
         checkpoint_pins = frozenset(config.training.checkpoint_pin_iterations)
         if config.training.checkpoint_keep_last > 0:
@@ -2892,7 +2955,24 @@ def _execute_training(
             repetition_unlikelihood_weight=config.training.repetition_unlikelihood_weight,
             repetition_unlikelihood_window=config.training.repetition_unlikelihood_window,
             repetition_unlikelihood_min_context=config.training.repetition_unlikelihood_min_context,
+            repetition_unlikelihood_warmup_steps=config.training.repetition_unlikelihood_warmup_steps,
         )
+
+        def _on_collapse_probe_pass(checkpoint_path: str | Path, global_step: int) -> None:
+            if named_checkpoint_policy is None:
+                return
+            resolved = Path(checkpoint_path).expanduser().resolve()
+            context = _checkpoint_context(iteration_hint=int(global_step))
+            try:
+                named_checkpoint_policy.update_last_probe_pass(
+                    source_checkpoint_path=resolved,
+                    context=context,
+                    extra={"collapse_probe_status": "pass"},
+                )
+            except Exception:
+                return
+
+        training_args._tikz_on_collapse_probe_pass = _on_collapse_probe_pass
 
         from .adapter_manifest import write_adapter_load_manifest
         manifest_path = Path(plan.args.output_path).expanduser().resolve().parent / "adapter_load_manifest.json"

@@ -97,12 +97,12 @@ training:
   epochs: 1
   gold_eval_dataset_path: data/prepared/gold_eval_unified_deleaked.jsonl
   iters: 16568
-  learning_rate: 1.0e-06
+  learning_rate: 8.0e-07
   lr_warmup_fraction: 0.02
-  lora_alpha: 128
-  lora_dropout: 0.08
-  lora_num_layers: 36
-  lora_rank: 64
+  lora_alpha: 64
+  lora_dropout: 0.06
+  lora_num_layers: 42
+  lora_rank: 32
   max_grad_norm: 0.5
   min_validation_compilation_rate: 0.0
   pretokenized_cache_path: data/prepared/curriculum/train_stage1_clean_tokenized.npy
@@ -169,9 +169,15 @@ training:
   train_dataset_path: data/prepared/curriculum/train_stage1_clean.jsonl
   train_on_completions: true
   repetition_unlikelihood_enabled: true
-  repetition_unlikelihood_weight: 0.05
+  repetition_unlikelihood_weight: 0.02
   repetition_unlikelihood_window: 64
   repetition_unlikelihood_min_context: 16
+  repetition_unlikelihood_warmup_steps: 500
+  collapse_probe:
+    enabled: true
+    interval_steps: 500
+    max_failures: 1
+    save_checkpoint_on_pass: true
   val_batches: 8
   val_dataset_path: data/prepared/val_unified_deleaked.jsonl
   validation_compile_probe_limit: 8

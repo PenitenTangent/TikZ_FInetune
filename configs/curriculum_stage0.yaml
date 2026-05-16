@@ -98,10 +98,10 @@ training:
   gold_eval_dataset_path: data/prepared/gold_eval_unified_deleaked.jsonl
   iters: 100
   learning_rate: 1.0e-06
-  lora_alpha: 128
+  lora_alpha: 32
   lora_dropout: 0.08
-  lora_num_layers: 36
-  lora_rank: 64
+  lora_num_layers: 42
+  lora_rank: 16
   max_grad_norm: 0.5
   min_validation_compilation_rate: 0.0
   pretokenized_cache_path: data/prepared/curriculum/synthetic_primitives_tokenized.npy

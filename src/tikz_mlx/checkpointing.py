@@ -14,6 +14,7 @@ BASE_NAMED_CHECKPOINTS: tuple[str, ...] = (
     "policy_init",
     "last",
     "last_prev",
+    "last_probe_pass",
     "best_by_eval",
     "last_epoch_boundary",
 )
@@ -308,6 +309,22 @@ class NamedCheckpointPolicyManager:
             source_checkpoint_path=source_checkpoint_path,
             context=context,
             metrics=metrics,
+        )
+
+    def update_last_probe_pass(
+        self,
+        *,
+        source_checkpoint_path: Path,
+        context: CheckpointContext,
+        metrics: dict[str, float] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> Path:
+        return self._set_alias(
+            "last_probe_pass",
+            source_checkpoint_path=source_checkpoint_path,
+            context=context,
+            metrics=metrics,
+            extra=extra,
         )
 
     def update_last_pre_reward_spike(

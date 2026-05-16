@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import json
 import sys
 import time
@@ -104,7 +105,65 @@ def train(
     state = [model.state, optimizer.state, mx.random.state]
     eval_milestones = frozenset(int(x) for x in getattr(args, "_tikz_eval_at", frozenset()))
 
-    def step(batch: Any, prev_grad: Any, do_update: bool) -> tuple[Any, Any, Any, Any, Any, Any]:
+    raw_seq_schedule = getattr(args, "_tikz_max_seq_length_schedule", ()) or ()
+    max_seq_schedule: list[tuple[int, int]] = []
+    if raw_seq_schedule:
+        schedule_total = int(total_target_iters or args.iters)
+        for fraction, max_len in raw_seq_schedule:
+            start_step = int(math.floor(float(fraction) * float(schedule_total)))
+            max_seq_schedule.append((start_step, int(max_len)))
+        max_seq_schedule.sort(key=lambda item: item[0])
+
+    def _scheduled_max_seq_length(global_step: int) -> int:
+        configured = int(args.max_seq_length)
+        if not max_seq_schedule:
+            return configured
+        selected = configured
+        for start_step, max_len in max_seq_schedule:
+            if global_step >= start_step:
+                selected = int(max_len)
+            else:
+                break
+        return min(selected, configured)
+
+    def _truncate_batch_sequences(batch: Any, max_len: int) -> Any:
+        if max_len <= 0 or not isinstance(batch, dict):
+            return batch
+        for key, value in list(batch.items()):
+            if key in {"pixel_values", "boundary_positions", "__tikz_example_index__"}:
+                continue
+            if not hasattr(value, "ndim") or not hasattr(value, "shape"):
+                continue
+            if int(getattr(value, "ndim", 0)) != 2:
+                continue
+            if value.shape[1] <= max_len:
+                continue
+            batch[key] = value[:, :max_len]
+        return batch
+
+    collapse_probe_enabled = bool(getattr(args, "_tikz_collapse_probe_enabled", True))
+    collapse_probe_interval_steps = int(getattr(args, "_tikz_collapse_probe_interval_steps", 500))
+    collapse_probe_max_failures = int(getattr(args, "_tikz_collapse_probe_max_failures", 1))
+    collapse_probe_save_checkpoint_on_pass = bool(
+        getattr(args, "_tikz_collapse_probe_save_checkpoint_on_pass", True)
+    )
+    on_collapse_probe_pass = getattr(args, "_tikz_on_collapse_probe_pass", None)
+    if collapse_probe_interval_steps <= 0:
+        collapse_probe_interval_steps = 500
+    collapse_probe_interval_steps = max(collapse_probe_interval_steps, grad_accum_steps)
+    collapse_probe_interval_steps = int(
+        math.ceil(collapse_probe_interval_steps / grad_accum_steps) * grad_accum_steps
+    )
+    if collapse_probe_max_failures <= 0:
+        collapse_probe_max_failures = 1
+
+    def step(
+        batch: Any,
+        prev_grad: Any,
+        do_update: bool,
+        *,
+        global_step: int,
+    ) -> tuple[Any, Any, Any, Any, Any, Any, bool]:
         if "attention_mask" in batch:
             lengths = batch["attention_mask"].sum(axis=1)
         else:
@@ -114,44 +173,50 @@ def train(
             )
 
         toks = lengths.sum()
-        lvalue, grad = loss_value_and_grad(model, batch)
-        
-        # Diagnostic: compute grad norm before clipping
-        # We flatten the grad and take the norm
-        flat_grad = mx.concatenate([v.reshape(-1) for _, v in mx_utils.tree_flatten(grad)])
-        grad_norm = mx.linalg.norm(flat_grad)
 
-        clip_scale = mx.array(1.0)
-        clipped = mx.array(0.0)
-        if args.grad_clip is not None:
-            # Proper L2 norm-based clipping
-            clip_scale = mx.minimum(args.grad_clip / mx.maximum(grad_norm, 1e-8), 1.0)
-            clipped = mx.where(clip_scale < 0.999999, 1.0, 0.0)
-            grad = mx_utils.tree_map(lambda g: g * clip_scale, grad)
+        try:
+            lvalue, grad = loss_value_and_grad(model, batch, global_step=global_step)
+        except TypeError:
+            lvalue, grad = loss_value_and_grad(model, batch)
 
         if prev_grad is not None:
             grad = mx_utils.tree_map(lambda x, y: x + y, grad, prev_grad)
 
+        did_update = False
+        grad_norm = mx.array(0.0)
+        clip_scale = mx.array(1.0)
+        clipped = mx.array(0.0)
         if do_update:
             grad = sft_trainer.average_gradients(grad)
             if grad_accum_steps > 1:
                 grad = mx_utils.tree_map(lambda x: x / grad_accum_steps, grad)
+
+            flat_grad = mx.concatenate([v.reshape(-1) for _, v in mx_utils.tree_flatten(grad)])
+            grad_norm = mx.linalg.norm(flat_grad)
+
+            if args.grad_clip is not None:
+                clip_scale = mx.minimum(args.grad_clip / mx.maximum(grad_norm, 1e-8), 1.0)
+                clipped = mx.where(clip_scale < 0.999999, 1.0, 0.0)
+                grad = mx_utils.tree_map(lambda g: g * clip_scale, grad)
             optimizer.update(model, grad)
             grad = None
+            did_update = True
 
-        return lvalue, toks, grad, grad_norm, clip_scale, clipped
+        return lvalue, toks, grad, grad_norm, clip_scale, clipped, did_update
 
     model.train()
     losses = 0
     n_tokens = 0
     steps = 0
+    update_steps = 0
     trained_tokens = 0
     train_time = 0.0
     grad_accum = None
-    grad_norms = 0.0
-    clip_scales = 0.0
-    clipped_steps = 0.0
+    grad_norms = mx.array(0.0)
+    clip_scales = mx.array(0.0)
+    clipped_steps = mx.array(0.0)
     probe_fail_count = 0
+    last_probe_pass_checkpoint: Path | None = None
     adapter_path = Path(args.adapter_file)
     if rank == 0:
         adapter_path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,18 +306,23 @@ def train(
         if isinstance(batch, dict):
             coverage_example_index = batch.pop("__tikz_example_index__", None)
 
-        lvalue, toks, grad_accum, g_norm, clip_scale, clipped = step(
+        batch = _truncate_batch_sequences(batch, _scheduled_max_seq_length(global_it))
+
+        lvalue, toks, grad_accum, g_norm, clip_scale, clipped, did_update = step(
             batch,
             grad_accum,
             global_it % grad_accum_steps == 0,
+            global_step=global_it,
         )
         mx.clear_cache()
         losses += lvalue
         n_tokens += toks
         steps += 1
-        grad_norms += g_norm
-        clip_scales += clip_scale
-        clipped_steps += clipped
+        if did_update:
+            update_steps += 1
+            grad_norms += g_norm
+            clip_scales += clip_scale
+            clipped_steps += clipped
         mx.eval(state, losses, n_tokens, grad_accum, grad_norms, clip_scales, clipped_steps)
         mark_batch_complete = getattr(args, "_tikz_mark_batch_complete", None)
         if coverage_example_index is not None and callable(mark_batch_complete):
@@ -262,9 +332,16 @@ def train(
         if local_it % args.steps_per_report == 0 or local_it == local_total_iters:
             train_loss = mx.distributed.all_sum(losses, stream=mx.cpu).item()
             train_loss /= steps * world_size
-            avg_grad_norm = mx.distributed.all_sum(grad_norms, stream=mx.cpu).item() / steps
-            avg_clip_scale = mx.distributed.all_sum(clip_scales, stream=mx.cpu).item() / (steps * world_size)
-            clipped_step_rate = mx.distributed.all_sum(clipped_steps, stream=mx.cpu).item() / (steps * world_size)
+            update_denominator = max(update_steps, 1)
+            avg_grad_norm = mx.distributed.all_sum(grad_norms, stream=mx.cpu).item() / (
+                update_denominator * world_size
+            )
+            avg_clip_scale = mx.distributed.all_sum(clip_scales, stream=mx.cpu).item() / (
+                update_denominator * world_size
+            )
+            clipped_step_rate = mx.distributed.all_sum(clipped_steps, stream=mx.cpu).item() / (
+                update_denominator * world_size
+            )
             n_tokens_total = mx.distributed.all_sum(n_tokens, stream=mx.cpu).item()
             learning_rate = (
                 optimizer.learning_rate.item()
@@ -318,9 +395,10 @@ def train(
             losses = 0
             n_tokens = 0
             steps = 0
-            grad_norms = 0.0
-            clip_scales = 0.0
-            clipped_steps = 0.0
+            update_steps = 0
+            grad_norms = mx.array(0.0)
+            clip_scales = mx.array(0.0)
+            clipped_steps = mx.array(0.0)
             train_time = 0.0
 
         if global_it % args.steps_per_save == 0 and rank == 0:
@@ -333,10 +411,12 @@ def train(
                 flush=True,
             )
 
-        # Run collapse probe every PROBE_INTERVAL steps (independent of checkpoint saves)
-        # so we catch degradation well before the next save window.
-        PROBE_INTERVAL = 500
-        if global_it % PROBE_INTERVAL == 0 and rank == 0 and processor is not None:
+        if (
+            collapse_probe_enabled
+            and processor is not None
+            and rank == 0
+            and global_it % collapse_probe_interval_steps == 0
+        ):
             print(
                 f"{sft_trainer.Colors.OKBLUE}Iter {global_it}: Running collapse probe...{sft_trainer.Colors.ENDC}",
                 flush=True,
@@ -344,17 +424,63 @@ def train(
             passed, failures = run_collapse_probe(model, processor, build_generation_prompt)
             if not passed:
                 probe_fail_count += 1
-                print(f"{sft_trainer.Colors.FAIL}WARNING: Collapse probe failed! ({probe_fail_count}/2){sft_trainer.Colors.ENDC}")
+                print(
+                    f"{sft_trainer.Colors.FAIL}Collapse probe failed ({probe_fail_count}/{collapse_probe_max_failures}).{sft_trainer.Colors.ENDC}",
+                    flush=True,
+                )
                 for f in failures:
                     print(f"  - {f['prompt']}: {', '.join(f['reasons'])}")
 
-                if probe_fail_count >= 100:
-                    print(f"{sft_trainer.Colors.FAIL}FATAL: Collapse probe failed 100 times. Aborting training to save compute.{sft_trainer.Colors.ENDC}")
-                    sys.exit(1)
+                report_path = adapter_path.parent / "collapse_probe_failure.json"
+                report = {
+                    "iteration": int(global_it),
+                    "local_iteration": int(local_it),
+                    "probe_interval_steps": int(collapse_probe_interval_steps),
+                    "max_failures": int(collapse_probe_max_failures),
+                    "failures": failures,
+                    "last_probe_pass_checkpoint": str(last_probe_pass_checkpoint) if last_probe_pass_checkpoint else None,
+                    "last_probe_pass_alias": str(adapter_path.parent / "named_checkpoints" / "last_probe_pass.safetensors"),
+                    "suggested_next": {
+                        "resume_from": (
+                            str(adapter_path.parent / "named_checkpoints" / "last_probe_pass.safetensors")
+                            if (adapter_path.parent / "named_checkpoints" / "last_probe_pass.safetensors").exists()
+                            else (str(last_probe_pass_checkpoint) if last_probe_pass_checkpoint else None)
+                        ),
+                        "tighten_grad_clip_factor": 0.5,
+                        "halve_learning_rate_factor": 0.5,
+                    },
+                }
+                try:
+                    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+                except Exception:
+                    pass
+
+                if probe_fail_count >= collapse_probe_max_failures:
+                    print(
+                        f"{sft_trainer.Colors.FAIL}FATAL: Collapse probe failed. Rolling back to last passing checkpoint is required; aborting training.{sft_trainer.Colors.ENDC}",
+                        flush=True,
+                    )
+                    if last_probe_pass_checkpoint is not None:
+                        print(
+                            f"Resume from: {adapter_path.parent / 'named_checkpoints' / 'last_probe_pass.safetensors'}",
+                            flush=True,
+                        )
+                    sys.exit(2)
             else:
-                # High-water mark logic: decrement instead of reset
-                probe_fail_count = max(0, probe_fail_count - 1)
-                print(f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed.{sft_trainer.Colors.ENDC}")
+                probe_fail_count = 0
+                if collapse_probe_save_checkpoint_on_pass:
+                    probe_checkpoint = adapter_path.parent / f"{global_it:07d}_adapters.safetensors"
+                    if not probe_checkpoint.exists():
+                        sft_trainer.save_adapter(model, probe_checkpoint)
+                    last_probe_pass_checkpoint = probe_checkpoint
+                    if callable(on_collapse_probe_pass):
+                        on_collapse_probe_pass(str(probe_checkpoint), int(global_it))
+                    print(
+                        f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed. Checkpoint: {probe_checkpoint}{sft_trainer.Colors.ENDC}",
+                        flush=True,
+                    )
+                else:
+                    print(f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed.{sft_trainer.Colors.ENDC}")
 
     if rank == 0:
         adapter_path.parent.mkdir(parents=True, exist_ok=True)

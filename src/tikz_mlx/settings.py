@@ -567,6 +567,29 @@ class CoverageConfig:
 
 
 @dataclass(slots=True)
+class CollapseProbeConfig:
+    enabled: bool
+    interval_steps: int
+    max_failures: int
+    save_checkpoint_on_pass: bool
+
+    @classmethod
+    def from_mapping(cls, mapping: dict[str, Any]) -> "CollapseProbeConfig":
+        interval_steps = int(mapping.get("interval_steps", 500))
+        max_failures = int(mapping.get("max_failures", 1))
+        if interval_steps <= 0:
+            raise ValueError("training.collapse_probe.interval_steps must be positive.")
+        if max_failures <= 0:
+            raise ValueError("training.collapse_probe.max_failures must be positive.")
+        return cls(
+            enabled=bool(mapping.get("enabled", True)),
+            interval_steps=interval_steps,
+            max_failures=max_failures,
+            save_checkpoint_on_pass=bool(mapping.get("save_checkpoint_on_pass", True)),
+        )
+
+
+@dataclass(slots=True)
 class TrainingConfig:
     train_dataset_path: Path
     pretokenized_cache_path: Path | None
@@ -613,10 +636,13 @@ class TrainingConfig:
     repetition_unlikelihood_weight: float
     repetition_unlikelihood_window: int
     repetition_unlikelihood_min_context: int
+    repetition_unlikelihood_warmup_steps: int
+    max_seq_length_schedule: tuple[tuple[float, int], ...]
     allow_full_training: bool
     resume_adapter_path: Path | None
     assistant_id: int | None
     coverage: CoverageConfig
+    collapse_probe: CollapseProbeConfig
     stage2: Stage2TrainingConfig
     static_critic_training_gate: bool  # plan §2.5: drop training records with critical static violations
     static_critic_max_violations: int  # max tolerated violations before a record is dropped
@@ -692,6 +718,36 @@ class TrainingConfig:
         repetition_unlikelihood_weight = float(mapping.get("repetition_unlikelihood_weight", 0.05))
         repetition_unlikelihood_window = int(mapping.get("repetition_unlikelihood_window", 64))
         repetition_unlikelihood_min_context = int(mapping.get("repetition_unlikelihood_min_context", 16))
+
+        repetition_unlikelihood_warmup_steps = int(mapping.get("repetition_unlikelihood_warmup_steps", 0))
+
+        seq_schedule_raw = mapping.get("max_seq_length_schedule")
+        schedule_points: list[tuple[float, int]] = []
+        if seq_schedule_raw not in (None, ""):
+            if not isinstance(seq_schedule_raw, (list, tuple)):
+                raise ValueError("training.max_seq_length_schedule must be a list.")
+            for entry in seq_schedule_raw:
+                if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    fraction = float(entry[0])
+                    max_len = int(entry[1])
+                elif isinstance(entry, dict):
+                    fraction = float(entry.get("fraction"))
+                    max_len = int(entry.get("max_seq_length"))
+                else:
+                    raise ValueError(
+                        "training.max_seq_length_schedule entries must be [fraction, max_seq_length] pairs "
+                        "or mappings with keys {fraction, max_seq_length}."
+                    )
+                if not 0.0 <= fraction <= 1.0:
+                    raise ValueError("training.max_seq_length_schedule fractions must be in [0, 1].")
+                if max_len <= 0:
+                    raise ValueError("training.max_seq_length_schedule max_seq_length must be positive.")
+                schedule_points.append((fraction, max_len))
+            schedule_points.sort(key=lambda item: item[0])
+            for i in range(1, len(schedule_points)):
+                if schedule_points[i][0] <= schedule_points[i - 1][0]:
+                    raise ValueError("training.max_seq_length_schedule fractions must be strictly increasing.")
+        max_seq_length_schedule = tuple(schedule_points)
         if dry_run_steps <= 0:
             raise ValueError("training.dry_run_steps must be positive.")
         if learning_rate <= 0.0:
@@ -757,6 +813,8 @@ class TrainingConfig:
             raise ValueError("training.repetition_unlikelihood_window must be positive.")
         if repetition_unlikelihood_min_context < 0:
             raise ValueError("training.repetition_unlikelihood_min_context must be non-negative.")
+        if repetition_unlikelihood_warmup_steps < 0:
+            raise ValueError("training.repetition_unlikelihood_warmup_steps must be non-negative.")
         return cls(
             train_dataset_path=train_dataset_path,
             pretokenized_cache_path=pretokenized_cache_path,
@@ -803,10 +861,13 @@ class TrainingConfig:
             repetition_unlikelihood_weight=repetition_unlikelihood_weight,
             repetition_unlikelihood_window=repetition_unlikelihood_window,
             repetition_unlikelihood_min_context=repetition_unlikelihood_min_context,
+            repetition_unlikelihood_warmup_steps=repetition_unlikelihood_warmup_steps,
+            max_seq_length_schedule=max_seq_length_schedule,
             allow_full_training=bool(mapping["allow_full_training"]),
             resume_adapter_path=_resolve_optional_path(root_dir, mapping.get("resume_adapter_path")),
             assistant_id=mapping.get("assistant_id"),
             coverage=CoverageConfig.from_mapping(mapping.get("coverage", {})),
+            collapse_probe=CollapseProbeConfig.from_mapping(mapping.get("collapse_probe", {})),
             stage2=Stage2TrainingConfig.from_mapping(root_dir, mapping.get("stage2", {})),
             static_critic_training_gate=static_critic_training_gate,
             static_critic_max_violations=static_critic_max_violations,
