@@ -1,4 +1,19 @@
 promotion_gate:
+  stage0:
+    min_compile_rate: 0.20
+    max_raw_repetition_loop_rate: 0.01
+    min_fence_ok_rate: 0.98
+    min_substantive_rate: 0.90
+  stage1:
+    min_compile_rate: 0.55
+    max_raw_repetition_loop_rate: 0.01
+    min_fence_ok_rate: 0.98
+    min_substantive_rate: 0.92
+  stage2:
+    min_compile_rate: 0.70
+    max_raw_repetition_loop_rate: 0.01
+    min_fence_ok_rate: 0.98
+    min_substantive_rate: 0.92
   normal:
     min_compile_rate: 0.20
     max_raw_repetition_loop_rate: 0.02

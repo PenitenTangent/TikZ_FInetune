@@ -92,6 +92,11 @@ training:
     save_interval_steps: 200
     state_file_name: coverage_state_clean_adapter.json
     strict_fingerprint: true
+  collapse_probe:
+    enabled: true
+    interval_steps: 50
+    max_failures: 1
+    save_checkpoint_on_pass: true
   dataset_path: data/prepared/curriculum/synthetic_primitives_filtered.jsonl
   dry_run_steps: 2
   epochs: 1

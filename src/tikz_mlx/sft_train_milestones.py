@@ -32,7 +32,7 @@ def train(
     mx = sft_trainer.mx
     nn = sft_trainer.nn
     import mlx.utils as mx_utils
-    from .collapse_probe import run_collapse_probe
+    from .collapse_probe import run_collapse_probe_suite
     from .prompting import build_generation_prompt
 
     if not hasattr(args, "_tikz_eval_at"):
@@ -424,7 +424,28 @@ def train(
                 f"{sft_trainer.Colors.OKBLUE}Iter {global_it}: Running collapse probe...{sft_trainer.Colors.ENDC}",
                 flush=True,
             )
-            passed, failures = run_collapse_probe(model, processor, build_generation_prompt)
+            probe_payload = run_collapse_probe_suite(model, processor, build_generation_prompt)
+            passed = bool(probe_payload.get("passed"))
+            failures = probe_payload.get("failures", [])
+            raw_warning = probe_payload.get("raw_greedy_warning", {})
+            probe_record = {
+                "iteration": int(global_it),
+                "local_iteration": int(local_it),
+                **probe_payload,
+            }
+            try:
+                with (adapter_path.parent / "collapse_probe_results.jsonl").open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(probe_record, sort_keys=True) + "\n")
+            except Exception:
+                pass
+            if raw_warning and not raw_warning.get("passed", True):
+                raw_failures = raw_warning.get("failures", [])
+                print(
+                    f"{sft_trainer.Colors.WARNING}Raw-greedy collapse warning: "
+                    f"{len(raw_failures)} sentinel prompt(s) failed; production probe still controls rollback."
+                    f"{sft_trainer.Colors.ENDC}",
+                    flush=True,
+                )
             if passed:
                 probe_fail_count = 0
                 if collapse_probe_save_checkpoint_on_pass:
@@ -457,6 +478,7 @@ def train(
                     "probe_interval_steps": int(collapse_probe_interval_steps),
                     "max_failures": int(collapse_probe_max_failures),
                     "failures": failures,
+                    "raw_greedy_warning": raw_warning,
                     "last_probe_pass_checkpoint": str(last_probe_pass_checkpoint) if last_probe_pass_checkpoint else None,
                     "last_probe_pass_alias": str(last_probe_pass_alias),
                     "suggested_next": {

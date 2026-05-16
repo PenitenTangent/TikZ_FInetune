@@ -119,6 +119,8 @@ training:
   reward_weight_floor: 0.0
   reward_weight_path: null
   reward_weighted_loss: false
+  # Disabled rollout/reward fine-tuning config, not the SFT curriculum Stage 2 above.
+  # Keep enabled: false unless explicitly running the rollout/reward stage.
   stage2:
     allow_full_training: true
     beta: 0.0

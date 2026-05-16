@@ -389,6 +389,84 @@ def collect_lora_telemetry(model: Any, initial_state: dict[str, np.ndarray] | No
     return telemetry
 
 
+EXPECTED_LORA_TARGET_SUFFIXES = (
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+)
+
+
+def _iter_named_modules_for_lora_audit(model: Any) -> list[tuple[str, Any]]:
+    roots = []
+    language_model = getattr(model, "language_model", None)
+    if language_model is not None:
+        roots.append(("language_model", language_model))
+    roots.append(("", model))
+
+    seen: set[int] = set()
+    named_modules: list[tuple[str, Any]] = []
+    for root_prefix, root in roots:
+        iterator = getattr(root, "named_modules", None)
+        if not callable(iterator):
+            continue
+        for name, module in iterator():
+            module_id = id(module)
+            if module_id in seen:
+                continue
+            seen.add(module_id)
+            full_name = f"{root_prefix}.{name}" if root_prefix and name else root_prefix or name
+            named_modules.append((full_name, module))
+    return named_modules
+
+
+def collect_lora_targets(model: Any) -> dict[str, Any]:
+    """Return actual LoRA target module names after adapter setup/unwrapping."""
+
+    targets: set[str] = set()
+    for name, module in _iter_named_modules_for_lora_audit(model):
+        class_name = module.__class__.__name__.lower()
+        if "lora" in class_name:
+            targets.add(name)
+
+    # Fallback for implementations that expose LoRA leaves via parameter names
+    # but not through visible wrapper classes in named_modules().
+    parameters = getattr(model, "parameters", None)
+    if callable(parameters):
+        try:
+            for name in parameters().keys():
+                lowered = name.lower()
+                if "lora" not in lowered:
+                    continue
+                for suffix in EXPECTED_LORA_TARGET_SUFFIXES:
+                    marker = f".{suffix}."
+                    if marker in name:
+                        targets.add(name.split(marker, 1)[0] + f".{suffix}")
+                        break
+                    if name.endswith(f".{suffix}"):
+                        targets.add(name)
+                        break
+        except Exception:
+            pass
+
+    sorted_targets = sorted(t for t in targets if t)
+    suffix_hits = {
+        suffix: any(target.endswith(suffix) or f".{suffix}." in target for target in sorted_targets)
+        for suffix in EXPECTED_LORA_TARGET_SUFFIXES
+    }
+    return {
+        "target_count": len(sorted_targets),
+        "targets": sorted_targets,
+        "expected_suffix_hits": suffix_hits,
+        "missing_expected_suffixes": [
+            suffix for suffix, present in suffix_hits.items() if not present
+        ],
+    }
+
+
 @dataclass(slots=True)
 class TrainingPlan:
     dataset_path: Path
@@ -2766,6 +2844,22 @@ def _execute_training(
                 f"optimizer_state_entries={optimizer_state_entries}"
             )
 
+        lora_targets = collect_lora_targets(model)
+        lora_targets_path = run_dir_for_named / "lora_targets.json"
+        lora_targets_path.write_text(
+            json.dumps(lora_targets, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        if lora_targets["missing_expected_suffixes"]:
+            plan.warnings.append(
+                "LoRA target audit missing expected suffixes: "
+                f"{', '.join(lora_targets['missing_expected_suffixes'])}. "
+                f"Wrote {lora_targets_path}"
+            )
+        else:
+            plan.warnings.append(
+                f"LoRA target audit wrote {lora_targets['target_count']} targets to {lora_targets_path}"
+            )
 
         telemetry_path = Path(plan.args.output_path).expanduser().resolve().parent / "phase_boundary_telemetry.json"
         write_phase_boundary_telemetry(

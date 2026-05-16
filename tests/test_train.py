@@ -47,6 +47,7 @@ from tikz_mlx.train import (
     _resolve_training_iterations,
     _vision_language_loss_fn_with_marker_sequences,
     build_lora_namespace,
+    collect_lora_targets,
     plan_training,
     run_training,
 )
@@ -218,6 +219,8 @@ def test_curriculum_stage0_uses_current_stable_params_without_unlikelihood() -> 
     assert config.model.max_context_tokens == 768
     assert config.training.repetition_unlikelihood_enabled is False
     assert config.training.repetition_unlikelihood_weight == pytest.approx(0.0)
+    assert config.training.collapse_probe.enabled is True
+    assert config.training.collapse_probe.interval_steps == 50
 
 
 def test_plan_training_threads_resume_adapter_into_namespace() -> None:
@@ -406,6 +409,35 @@ def test_curriculum_stage2_switches_to_1024_after_70_percent() -> None:
     assert cfg.model.max_context_tokens == 1024
     assert cfg.training.max_seq_length_schedule == ((0.0, 768), (0.7, 1024))
     assert cfg.training.repetition_unlikelihood_weight == pytest.approx(0.02)
+
+
+def test_collect_lora_targets_reports_expected_suffixes() -> None:
+    class FakeLoRaLayer:
+        pass
+
+    class FakeLanguageModel:
+        def __init__(self) -> None:
+            self.layers = {
+                "model.layers.0.self_attn.q_proj": FakeLoRaLayer(),
+                "model.layers.0.self_attn.k_proj": FakeLoRaLayer(),
+                "model.layers.0.self_attn.v_proj": FakeLoRaLayer(),
+                "model.layers.0.self_attn.o_proj": FakeLoRaLayer(),
+                "model.layers.0.mlp.gate_proj": FakeLoRaLayer(),
+                "model.layers.0.mlp.up_proj": FakeLoRaLayer(),
+                "model.layers.0.mlp.down_proj": FakeLoRaLayer(),
+            }
+
+        def named_modules(self):
+            return list(self.layers.items())
+
+    class FakeModel:
+        language_model = FakeLanguageModel()
+
+    audit = collect_lora_targets(FakeModel())
+
+    assert audit["target_count"] == 7
+    assert audit["missing_expected_suffixes"] == []
+    assert all(audit["expected_suffix_hits"].values())
 
 
 def test_strict_coverage_rejects_filename_resume_offset() -> None:
