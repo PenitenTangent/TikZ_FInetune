@@ -609,6 +609,10 @@ class TrainingConfig:
     syntax_structural_weight: float
     syntax_command_weight: float
     syntax_coordinate_weight: float
+    repetition_unlikelihood_enabled: bool
+    repetition_unlikelihood_weight: float
+    repetition_unlikelihood_window: int
+    repetition_unlikelihood_min_context: int
     allow_full_training: bool
     resume_adapter_path: Path | None
     assistant_id: int | None
@@ -618,6 +622,7 @@ class TrainingConfig:
     static_critic_max_violations: int  # max tolerated violations before a record is dropped
     repair_before_training: bool  # plan §2.3: compile-and-repair each JSONL completion before SFT
     repair_before_training_timeout: float  # per-sample tectonic timeout seconds during the pre-flight repair
+    lr_warmup_fraction: float  # fraction of total steps used for LR warmup (default 0.10 for fresh runs)
 
     @classmethod
     def from_mapping(cls, root_dir: Path, mapping: dict[str, Any]) -> "TrainingConfig":
@@ -683,6 +688,10 @@ class TrainingConfig:
         syntax_structural_weight = float(mapping.get("syntax_structural_weight", 5.0))
         syntax_command_weight = float(mapping.get("syntax_command_weight", 2.0))
         syntax_coordinate_weight = float(mapping.get("syntax_coordinate_weight", 1.0))
+        repetition_unlikelihood_enabled = bool(mapping.get("repetition_unlikelihood_enabled", False))
+        repetition_unlikelihood_weight = float(mapping.get("repetition_unlikelihood_weight", 0.05))
+        repetition_unlikelihood_window = int(mapping.get("repetition_unlikelihood_window", 64))
+        repetition_unlikelihood_min_context = int(mapping.get("repetition_unlikelihood_min_context", 16))
         if dry_run_steps <= 0:
             raise ValueError("training.dry_run_steps must be positive.")
         if learning_rate <= 0.0:
@@ -693,6 +702,9 @@ class TrainingConfig:
         static_critic_max_violations = int(mapping.get("static_critic_max_violations", 0))
         repair_before_training = bool(mapping.get("repair_before_training", False))
         repair_before_training_timeout = float(mapping.get("repair_before_training_timeout", 10.0))
+        lr_warmup_fraction = float(mapping.get("lr_warmup_fraction", 0.10))
+        if not 0.0 <= lr_warmup_fraction < 1.0:
+            raise ValueError("training.lr_warmup_fraction must be in the range [0, 1).")
         if epochs <= 0:
             raise ValueError("training.epochs must be positive.")
         if steps_per_save <= 0:
@@ -739,6 +751,12 @@ class TrainingConfig:
             raise ValueError("training.syntax_command_weight must be positive.")
         if syntax_coordinate_weight <= 0.0:
             raise ValueError("training.syntax_coordinate_weight must be positive.")
+        if repetition_unlikelihood_weight < 0.0:
+            raise ValueError("training.repetition_unlikelihood_weight must be non-negative.")
+        if repetition_unlikelihood_window <= 0:
+            raise ValueError("training.repetition_unlikelihood_window must be positive.")
+        if repetition_unlikelihood_min_context < 0:
+            raise ValueError("training.repetition_unlikelihood_min_context must be non-negative.")
         return cls(
             train_dataset_path=train_dataset_path,
             pretokenized_cache_path=pretokenized_cache_path,
@@ -781,6 +799,10 @@ class TrainingConfig:
             syntax_structural_weight=syntax_structural_weight,
             syntax_command_weight=syntax_command_weight,
             syntax_coordinate_weight=syntax_coordinate_weight,
+            repetition_unlikelihood_enabled=repetition_unlikelihood_enabled,
+            repetition_unlikelihood_weight=repetition_unlikelihood_weight,
+            repetition_unlikelihood_window=repetition_unlikelihood_window,
+            repetition_unlikelihood_min_context=repetition_unlikelihood_min_context,
             allow_full_training=bool(mapping["allow_full_training"]),
             resume_adapter_path=_resolve_optional_path(root_dir, mapping.get("resume_adapter_path")),
             assistant_id=mapping.get("assistant_id"),
@@ -790,6 +812,7 @@ class TrainingConfig:
             static_critic_max_violations=static_critic_max_violations,
             repair_before_training=repair_before_training,
             repair_before_training_timeout=repair_before_training_timeout,
+            lr_warmup_fraction=lr_warmup_fraction,
         )
 
 

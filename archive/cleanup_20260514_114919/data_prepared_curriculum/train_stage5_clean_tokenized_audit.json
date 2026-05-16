@@ -1,0 +1,34 @@
+{
+  "assistant_boundary_rule": "assistant role completion only after opened latex fence",
+  "chat_template_sha256": "781d10940fbc44be40064b5d43a056fc486c84ceaa55538226368b57314132bf",
+  "disabled_rules": [],
+  "kept_length_ge_fractions": {
+    "1024": 0.1232044322319773,
+    "1280": 0.0003797779416035565,
+    "1536": 0.0,
+    "512": 0.7397850903648102,
+    "768": 0.35672318656032886
+  },
+  "kept_sample_ids_sha256": "7f282b5e3653b35ad88b161346ad31aab3429464790557ef5cebc74f8fd823cd",
+  "max_tokens": 1280,
+  "model_id": "mlx-community/gemma-4-e4b-it-6bit",
+  "normalization_config_hash": "",
+  "original_source_jsonl_path": "/Users/andrisoueslati/Code/TikZ/data/prepared/curriculum/train_stage5_clean.jsonl",
+  "original_source_row_count": 44763,
+  "prompt_contract_version": "tikz_body_only_v3",
+  "prompt_template_sha256": "cb56cd29852da1a8a8152576492739d2fd677755ee3d3fc45244e5a9e85b292e",
+  "skipped_row_count": 0,
+  "skipped_sample_ids": [],
+  "source_jsonl_path": "/Users/andrisoueslati/Code/TikZ/data/prepared/curriculum/train_stage5_clean.jsonl",
+  "source_jsonl_sha256": "25bdb2c92589441fdd187ef67be0b6b67b7ba5a65fc4ffd3988dc1faa2ea2a49",
+  "source_row_count": 44763,
+  "token_length_histogram": {
+    "max": 1280,
+    "mean": 698.5556821482028,
+    "min": 257,
+    "p95": 1155.0,
+    "p99": 1252.0
+  },
+  "tokenized_row_count": 44763,
+  "tokenizer_id": "mlx-community/gemma-4-e4b-it-6bit"
+}

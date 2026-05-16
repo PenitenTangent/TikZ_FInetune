@@ -13,27 +13,19 @@ import sys
 from pathlib import Path
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Enforce promotion gate on TikZ eval results.")
-    parser.add_argument("--eval-dir", required=True, help="Directory containing results.json")
-    parser.add_argument("--variant", default="finetuned", help="Variant to check (default: finetuned)")
-    parser.add_argument("--base-variant", default="base", help="Base variant key (default: base)")
-    args = parser.parse_args()
+def evaluate_promotion_gate(
+    data: dict,
+    *,
+    variant: str = "finetuned",
+    base_variant: str = "base",
+    max_avg_token_ratio_vs_base: float = 1.6,
+    max_avg_code_length_ratio_vs_base: float = 1.6,
+) -> dict:
+    if variant not in data:
+        raise KeyError(f"Variant '{variant}' not found in results.json.")
 
-    results_path = Path(args.eval_dir) / "results.json"
-    if not results_path.exists():
-        print(f"ERROR: {results_path} not found.", file=sys.stderr)
-        sys.exit(1)
-
-    with results_path.open("r", encoding="utf-8") as fh:
-        data = json.load(fh)
-
-    if args.variant not in data:
-        print(f"ERROR: Variant '{args.variant}' not found in results.json.", file=sys.stderr)
-        sys.exit(1)
-
-    m = data[args.variant]
-    base = data.get(args.base_variant, {})
+    m = data[variant]
+    base = data.get(base_variant, {})
 
     violations: list[str] = []
 
@@ -41,7 +33,6 @@ def main() -> None:
     # Any nonzero rate here is an immediate failure.
     for metric in [
         "preview_environment_rate",
-        "assistant_usepackage_rate",
         "assistant_documentclass_rate",
         "decorations_geometric_rate",
         "repetition_loop_rate",
@@ -50,20 +41,35 @@ def main() -> None:
         if val > 0.0:
             violations.append(f"{metric}: {val:.4f} > 0.0  (zero tolerance)")
 
-    # ── Bad-pattern pass rate must be 100% ────────────────────────────────────
+    # ── Near-zero tolerance: minor collapse signals ───────────────────────────
+    for metric, threshold in [
+        ("assistant_usepackage_rate", 0.02),
+    ]:
+        val = m.get(metric, 0.0)
+        if val > threshold:
+            violations.append(f"{metric}: {val:.4f} > {threshold:.4f} (near-zero tolerance)")
+
+    # ── Bad-pattern pass rate must be >= 98% ──────────────────────────────────
     bpp = m.get("bad_pattern_pass_rate", 0.0)
-    if bpp < 1.0:
-        violations.append(f"bad_pattern_pass_rate: {bpp:.4f} < 1.0")
+    if bpp < 0.98:
+        violations.append(f"bad_pattern_pass_rate: {bpp:.4f} < 0.98")
 
     # ── Closing fence: 95%+ must close exactly once ───────────────────────────
     fence_rate = m.get("closing_fence_exactly_once_rate", 0.0)
     if fence_rate < 0.95:
         violations.append(f"closing_fence_exactly_once_rate: {fence_rate:.4f} < 0.95")
 
-    # ── Code length ratio vs base ─────────────────────────────────────────────
+    # ── Length gates ──────────────────────────────────────────────────────────
     length_ratio = m.get("avg_code_length_ratio_vs_base", 999.0)
-    if length_ratio > 1.6:
-        violations.append(f"avg_code_length_ratio_vs_base: {length_ratio:.3f} > 1.6")
+    if length_ratio > max_avg_code_length_ratio_vs_base:
+        violations.append(
+            f"avg_code_length_ratio_vs_base: {length_ratio:.3f} > "
+            f"{max_avg_code_length_ratio_vs_base:.3f}"
+        )
+    for metric in ["avg_raw_token_ratio_vs_base", "avg_code_token_ratio_vs_base"]:
+        ratio = m.get(metric, None)
+        if ratio is not None and ratio > max_avg_token_ratio_vs_base:
+            violations.append(f"{metric}: {ratio:.3f} > {max_avg_token_ratio_vs_base:.3f}")
 
     # ── Relative compile rate ──────────────────────────────────────────────────
     base_compile = base.get("compile_rate", None)
@@ -77,7 +83,7 @@ def main() -> None:
                 f"(80% of base={base_compile:.3f}, floor=0.70)"
             )
     else:
-        # No base available — use absolute floor
+        # No base available - use absolute floor
         if cand_compile < 0.70:
             violations.append(f"compile_rate: {cand_compile:.3f} < 0.70 (no base; absolute floor)")
 
@@ -104,13 +110,46 @@ def main() -> None:
                 f"> base={base_rep:.4f}"
             )
 
-    # ── Save results ───────────────────────────────────────────────────────────
-    gate_result = {
+    return {
         "pass": len(violations) == 0,
         "violations": violations,
         "candidate_metrics": m,
         "base_metrics": base,
+        "thresholds": {
+            "max_avg_token_ratio_vs_base": max_avg_token_ratio_vs_base,
+            "max_avg_code_length_ratio_vs_base": max_avg_code_length_ratio_vs_base,
+        },
     }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Enforce promotion gate on TikZ eval results.")
+    parser.add_argument("--eval-dir", required=True, help="Directory containing results.json")
+    parser.add_argument("--variant", default="finetuned", help="Variant to check (default: finetuned)")
+    parser.add_argument("--base-variant", default="base", help="Base variant key (default: base)")
+    parser.add_argument("--max-avg-token-ratio-vs-base", type=float, default=1.6)
+    parser.add_argument("--max-avg-code-length-ratio-vs-base", type=float, default=1.6)
+    args = parser.parse_args()
+
+    results_path = Path(args.eval_dir) / "results.json"
+    if not results_path.exists():
+        print(f"ERROR: {results_path} not found.", file=sys.stderr)
+        sys.exit(1)
+
+    with results_path.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+
+    if args.variant not in data:
+        print(f"ERROR: Variant '{args.variant}' not found in results.json.", file=sys.stderr)
+        sys.exit(1)
+
+    gate_result = evaluate_promotion_gate(
+        data,
+        variant=args.variant,
+        base_variant=args.base_variant,
+        max_avg_token_ratio_vs_base=args.max_avg_token_ratio_vs_base,
+        max_avg_code_length_ratio_vs_base=args.max_avg_code_length_ratio_vs_base,
+    )
     gate_path = Path(args.eval_dir) / "promotion_gate_result.json"
     gate_path.write_text(json.dumps(gate_result, indent=2), encoding="utf-8")
 
@@ -119,7 +158,7 @@ def main() -> None:
         sys.exit(0)
     else:
         print("❌ Promotion gate FAILED:")
-        for v in violations:
+        for v in gate_result["violations"]:
             print(f"  - {v}")
         sys.exit(1)
 

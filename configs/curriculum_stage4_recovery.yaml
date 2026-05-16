@@ -25,7 +25,7 @@ compiler:
 memory:
   batch_size: 1
   gradient_checkpointing: true
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 8
   freeze_vision: true
   clear_cache_between_retries: true
   retry_cache_policy: clear
@@ -55,7 +55,7 @@ inference:
     top_p: 1.0
     top_k: 64
     min_p: 0.05
-    repetition_penalty: 1.15
+    repetition_penalty: 1.2
   compile_repair_decoding:
     max_tokens: 896
     temperature: 0.3
@@ -73,30 +73,34 @@ inference:
 training:
   dataset_path: data/prepared/curriculum/train_stage4_clean.jsonl
   train_dataset_path: data/prepared/curriculum/train_stage4_clean.jsonl
-  val_dataset_path: data/prepared/val_unified_clean.jsonl
-  gold_eval_dataset_path: data/prepared/gold_eval_unified_clean.jsonl
+  val_dataset_path: data/prepared/val_unified_deleaked.jsonl
+  gold_eval_dataset_path: data/prepared/gold_eval_unified_deleaked.jsonl
   require_nonempty_validation_dataset: true
   require_nonempty_gold_eval_dataset: true
-  min_validation_compilation_rate: 0.20
+  min_validation_compilation_rate: 0.2
   validation_compile_probe_limit: 8
   dry_run_steps: 2
-  learning_rate: 2.0e-05
-  max_grad_norm: 1.0
+  learning_rate: 1.0e-06
+  max_grad_norm: 0.5
   epochs: 1
-  iters: 120
+  iters: 49856
   pretokenized_packed_cache_path: null
   pretokenized_cache_path: data/prepared/curriculum/train_stage4_clean_tokenized.npy
-  steps_per_save: 25
+  steps_per_save: 512
   steps_per_eval: 25
   val_batches: 4
-  checkpoint_keep_last: 40
+  checkpoint_keep_last: 5
   checkpoint_cleanup_interval_seconds: 20
-  lora_rank: 24
-  lora_alpha: 48
-  lora_dropout: 0.0
+  lora_rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.03
   lora_num_layers: 28
   auto_resume_latest_checkpoint: false
   train_on_completions: true
+  repetition_unlikelihood_enabled: true
+  repetition_unlikelihood_weight: 0.05
+  repetition_unlikelihood_window: 64
+  repetition_unlikelihood_min_context: 16
   assistant_id: 4368
   completion_mask_preflight_enabled: true
   completion_mask_preflight_rows: 2500
@@ -116,7 +120,7 @@ training:
   allow_full_training: true
   resume_adapter_path: null
   coverage:
-    enabled: false
+    enabled: true
     strict_fingerprint: true
     require_state_for_resume: true
     save_interval_steps: 200

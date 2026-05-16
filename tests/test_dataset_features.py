@@ -57,8 +57,8 @@ def test_training_record_includes_mode_and_geometry_hints_in_metadata_and_prompt
     assert "[GEOMETRY HINTS]" in prompt
     assert "mode: plain_tikz" in prompt
     assert "bounding_box: (0, 0) to (2, 1)" in prompt
-    assert prompt.count("--- Starting Preamble ---") == 1
-    assert prompt.count("\\documentclass") == 1
+    assert "Generate only the TikZ environment body" in prompt
+    assert "Do not output a LaTeX preamble" in prompt
     assert prompt.rstrip().endswith("```latex")
     assert assistant.count("```") == 1
     assert "\\begin{document}" not in assistant

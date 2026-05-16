@@ -149,6 +149,22 @@ class MlxVlmAdapter:
         self.memory_config = memory_config
         self.loaded: LoadedModel | None = None
 
+    @staticmethod
+    def load_model(model_id: str, adapter_path: str | Path | None = None) -> tuple[Any, Any]:
+        """Load a model with an optional adapter, handling shimming if needed."""
+        try:
+            from mlx_vlm import load
+        except ImportError:
+            raise MlxDependencyError("mlx-vlm is not installed.")
+
+        shimmed_path = prepare_adapter_for_mlx_vlm(adapter_path)
+        if shimmed_path:
+            print(f"Loading model {model_id} with adapter from {shimmed_path}...")
+            return load(model_id, adapter_path=str(shimmed_path))
+        else:
+            print(f"Loading base model {model_id}...")
+            return load(model_id)
+
     def _import_api(self) -> tuple[Any, Any, Any, Any]:
         try:
             import_mlx_core()

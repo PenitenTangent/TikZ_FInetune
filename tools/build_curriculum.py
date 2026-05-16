@@ -203,14 +203,15 @@ def main():
         p95 = int(np.percentile(lengths, 95))
         max_context = ((p95 + 127) // 128) * 128
         max_context = max(512, min(max_context, 1536))
-        stage_iters = stage_iters_list[i]
-        
-        if max_context <= 768:
-            grad_accum, val_batches, lr = 4, 25, 3e-5
-        elif max_context <= 1024:
-            grad_accum, val_batches, lr = 2, 10, 2e-5
-        else:
-            grad_accum, val_batches, lr = 1, 5, 1e-5
+        lora_ranks = [16, 24, 32]
+        lora_dropouts = [0.03, 0.05, 0.05]
+        weight_decays = [0.05, 0.03, 0.02]
+        max_grad_norms = [1.0, 0.5, 0.5]
+        learning_rates = [4e-6, 2e-6, 1.5e-6]
+        grad_accum = 8
+        val_batches = 25 if max_context <= 768 else (10 if max_context <= 1024 else 5)
+        lr = learning_rates[i]
+        stage_iters = ((stage_iters_list[i] + grad_accum - 1) // grad_accum) * grad_accum
 
         print(f"\n--- Stage {stage_num} ---")
         print(f"Examples: {len(stage_records)} ({len(stage_records)/len(records)*100:.1f}%)")
@@ -262,6 +263,12 @@ def main():
             stage_config["model"]["max_context_tokens"] = max_context
             stage_config["memory"]["gradient_accumulation_steps"] = grad_accum
             stage_config["training"]["lora_num_layers"] = 28
+            stage_config["training"]["lora_rank"] = lora_ranks[i]
+            stage_config["training"]["lora_alpha"] = 2 * lora_ranks[i]
+            stage_config["training"]["lora_dropout"] = lora_dropouts[i]
+            stage_config["training"]["max_grad_norm"] = max_grad_norms[i]
+            stage_config["training"]["weight_decay"] = weight_decays[i]
+            stage_config["training"]["steps_per_save"] = 512
             stage_config["training"]["iters"] = stage_iters
             stage_config["training"]["val_batches"] = val_batches
             stage_config["training"]["learning_rate"] = lr

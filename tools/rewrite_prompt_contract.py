@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -21,15 +22,24 @@ from tikz_mlx.normalize import normalize_for_training_target
 
 def _extract_description_and_hints(record: dict) -> tuple[str, str]:
     """Try to recover description and hints from the old prompt or record."""
-    if "description" in record:
-        return record["description"], record.get("hints", "")
-    
+    description = record.get("description", "")
+    hints = record.get("hints", "")
+
+    # Also check metadata for generation_mode
+    meta_mode = record.get("metadata", {}).get("generation_mode")
+
     for msg in record.get("messages", []):
         if msg.get("role") == "user":
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = "".join(p.get("text", "") for p in content if p.get("type") == "text")
-            
+
+            # If metadata mode is missing, try to find it in the prompt
+            if not meta_mode:
+                mode_match = re.search(r"mode:\s*(\w+)", content)
+                if mode_match:
+                    meta_mode = mode_match.group(1)
+
             # Strip old instruction boilerplate
             # Old contract v1/v2 patterns
             content = content.replace("Generate only the TikZ environment body according to the following requirements:", "")
@@ -41,14 +51,19 @@ def _extract_description_and_hints(record: dict) -> tuple[str, str]:
             content = content.replace("- Preserve geometric constraints from the description (coordinates, labels, and relative placement).", "")
             content = content.replace("- Use strict TikZ syntax: terminate paths with ';', use calc ($...$) for math.", "")
             content = content.replace("```latex", "")
-            
+
+            # Also strip the GEOMETRY HINTS block if we found it
+            content = re.sub(r"\[GEOMETRY HINTS\].*?```latex", "", content, flags=re.DOTALL)
+            content = re.sub(r"\[GEOMETRY HINTS\].*$", "", content, flags=re.DOTALL)
+
             # Clean up double newlines
             while "\n\n\n" in content:
                 content = content.replace("\n\n\n", "\n\n")
-            
-            return content.strip(), ""
-    
-    return "Unknown TikZ figure", ""
+
+            if not description:
+                description = content.strip()
+
+    return description or "Unknown TikZ figure", meta_mode or "plain_tikz"
 
 
 def rewrite_record(record: dict) -> dict:
@@ -88,15 +103,21 @@ def rewrite_record(record: dict) -> dict:
         {"role": "user", "content": user_prompt},
         {"role": "assistant", "content": target_with_fence}
     ]
-    
+
+    # Preserve old metadata but override contract fields
+    new_metadata = dict(record.get("metadata", {}))
+    new_metadata["prompt_contract_version"] = PROMPT_CONTRACT_VERSION
+    new_metadata["prompt_template_sha256"] = prompt_template_sha256()
+    new_metadata["target_contract"] = "body_only_environment"
+
+    # Ensure generation_mode is set correctly if we recovered it
+    if hints: # hints is actually meta_mode in this script's return signature
+        new_metadata["generation_mode"] = hints
+
     new_record = {
         "sample_id": record.get("sample_id"),
         "messages": new_messages,
-        "metadata": {
-            "prompt_contract_version": PROMPT_CONTRACT_VERSION,
-            "prompt_template_sha256": prompt_template_sha256(),
-            "target_contract": "body_only_environment"
-        }
+        "metadata": new_metadata
     }
     
     # Preserve any other useful fields

@@ -70,7 +70,7 @@ def _generate(
         "verbose": False,
     }
     if "repetition_penalty" in inspect.signature(stream_generate).parameters:
-        kwargs["repetition_penalty"] = 1.15
+        kwargs["repetition_penalty"] = 1.2
 
     result = ""
     for chunk in stream_generate(**kwargs):
@@ -125,7 +125,7 @@ def main() -> None:
             "temperature": args.temperature,
             "max_tokens": args.max_tokens,
             "top_p": 1.0,
-            "repetition_penalty": 1.15,
+            "repetition_penalty": 1.2,
         },
         "output_sha256": _sha256_text(output),
         "first_300_chars": output[:300],

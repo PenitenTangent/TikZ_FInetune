@@ -17,7 +17,11 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from .adapter_config_io import validate_resumed_adapter_lora_hyperparams
+from .adapter_config_io import (
+    load_source_lora_hyperparams,
+    materialize_lora_handoff_adapter,
+    validate_resumed_adapter_lora_hyperparams,
+)
 from .checkpointing import (
     CheckpointContext,
     NamedCheckpointPolicyManager,
@@ -66,36 +70,86 @@ COMMAND_TOKEN_PATTERN = re.compile(r"^\\[A-Za-z@]+$")
 COORDINATE_TOKEN_PATTERN = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 
-def _read_checkpoint_iteration(adapter_dir: Path) -> int | None:
-    """Read the iteration count from checkpoint metadata file."""
-    metadata_file = adapter_dir / CHECKPOINT_METADATA_FILE
-    if not metadata_file.exists():
+@dataclass(frozen=True, slots=True)
+class CheckpointResumeInfo:
+    global_step: int
+    run_id: str | None
+    source: str
+
+
+def _checkpoint_step_from_payload(payload: dict[str, Any]) -> int | None:
+    value = payload.get("global_step", payload.get("iteration"))
+    if value is None:
         return None
     try:
-        with open(metadata_file, "r") as f:
-            data = json.load(f)
-            value = data.get("iteration", data.get("global_step"))
-            if value is None:
-                return None
-            return int(value)
-    except (json.JSONDecodeError, OSError):
+        step = int(value)
+    except (TypeError, ValueError):
         return None
+    return step if step >= 0 else None
 
 
-def _write_checkpoint_iteration(adapter_dir: Path, iteration: int) -> None:
+def _read_checkpoint_resume_info(adapter_path: Path) -> CheckpointResumeInfo | None:
+    """Read the global training step represented by an adapter checkpoint."""
+    resolved = adapter_path.expanduser().resolve()
+    weights_path = resolve_adapter_weights_path(resolved)
+    metadata_candidates: list[Path] = []
+    if resolved.is_dir():
+        metadata_candidates.append(resolved / CHECKPOINT_METADATA_FILE)
+    else:
+        metadata_candidates.append(checkpoint_metadata_path(resolved))
+    if weights_path is not None:
+        metadata_candidates.append(checkpoint_metadata_path(weights_path))
+        metadata_candidates.append(weights_path.parent / CHECKPOINT_METADATA_FILE)
+
+    seen: set[Path] = set()
+    for metadata_path in metadata_candidates:
+        if metadata_path in seen or not metadata_path.exists():
+            continue
+        seen.add(metadata_path)
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        step = _checkpoint_step_from_payload(payload)
+        if step is None:
+            continue
+        run_id = payload.get("run_id")
+        return CheckpointResumeInfo(
+            global_step=step,
+            run_id=run_id if isinstance(run_id, str) and run_id.strip() else None,
+            source=str(metadata_path),
+        )
+
+    filename_step = extract_iteration_from_checkpoint_name(weights_path or resolved)
+    if filename_step is None:
+        return None
+    return CheckpointResumeInfo(
+        global_step=filename_step,
+        run_id=None,
+        source=str(weights_path or resolved),
+    )
+
+
+def _read_checkpoint_iteration(adapter_path: Path) -> int | None:
+    info = _read_checkpoint_resume_info(adapter_path)
+    return info.global_step if info is not None else None
+
+
+def _write_checkpoint_iteration(adapter_dir: Path, iteration: int, *, run_id: str | None = None) -> None:
     """Write the iteration count to checkpoint metadata file."""
     adapter_dir.mkdir(parents=True, exist_ok=True)
     metadata_file = adapter_dir / CHECKPOINT_METADATA_FILE
     try:
+        payload: dict[str, Any] = {
+            "iteration": int(iteration),
+            "global_step": int(iteration),
+            "step_source": "checkpoint_filename",
+            "updated_at": utc_now_iso8601(),
+        }
+        if run_id:
+            payload["run_id"] = run_id
         with open(metadata_file, "w") as f:
-            json.dump(
-                {
-                    "iteration": int(iteration),
-                    "global_step": int(iteration),
-                    "updated_at": utc_now_iso8601(),
-                },
-                f,
-            )
+            json.dump(payload, f)
     except OSError:
         pass  # Non-critical; silently skip if write fails
 
@@ -428,6 +482,7 @@ class StrictCoverageTracker:
         total_examples: int,
         target_steps: int,
         resume_requested: bool,
+        accepted_config_fingerprints: set[str] | None = None,
     ) -> None:
         self._config = config
         self._coverage = config.training.coverage
@@ -437,6 +492,8 @@ class StrictCoverageTracker:
         self._orders_dir = run_dir / self._coverage.epoch_orders_dir_name
         self._dataset_fingerprint = dataset_fingerprint
         self._config_fingerprint = config_fingerprint
+        self._accepted_config_fingerprints = set(accepted_config_fingerprints or ())
+        self._accepted_config_fingerprints.add(config_fingerprint)
         self._total_examples = total_examples
         self._target_steps = target_steps
         self._current_order: list[int] | None = None
@@ -495,12 +552,37 @@ class StrictCoverageTracker:
         if self.state.global_step % self._coverage.save_interval_steps == 0:
             self.save(force=True)
 
+    def sync_to_global_step(self, target_step: int) -> None:
+        """Roll back or fast-forward the tracker to match a specific global step.
+
+        Used to recover from crashes where the state file was updated but the
+        weights were not saved.
+        """
+        if self.state.global_step == target_step:
+            return
+
+        epoch = target_step // self._total_examples
+        batch_cursor = target_step % self._total_examples
+
+        self.state.epoch = epoch
+        self.state.batch_cursor_in_epoch = batch_cursor
+        self.state.seen_in_epoch_count = batch_cursor
+        self.state.global_step = target_step
+
+        # Reload the target epoch order; the previous state's checksum may
+        # belong to a different epoch when crash recovery jumps the cursor.
+        self._current_order = None
+        self._load_epoch_order(epoch=epoch, expected_checksum=None)
+        self.state.next_example_index = self.peek_next_example_index()
+        self.save(force=True)
+
     def save(self, *, force: bool = False) -> None:
         if not force and not self._coverage.enabled:
             return
         self.state.updated_at = utc_now_iso8601()
         payload = self.state.to_dict()
-        tmp_path = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._state_path.with_name(f"{self._state_path.name}.{os.getpid()}.tmp")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
         os.replace(tmp_path, self._state_path)
@@ -529,6 +611,7 @@ class StrictCoverageTracker:
                 seed_base=self._coverage.order_seed_base,
                 epoch=epoch,
             )
+            order_path.parent.mkdir(parents=True, exist_ok=True)
             with order_path.open("w", encoding="utf-8") as handle:
                 json.dump({"epoch": epoch, "order": order}, handle, indent=2, sort_keys=True)
 
@@ -571,8 +654,9 @@ class StrictCoverageTracker:
             if self._coverage.strict_fingerprint:
                 if loaded.dataset_fingerprint != self._dataset_fingerprint:
                     raise RuntimeError("Dataset fingerprint mismatch in strict coverage mode.")
-                if loaded.config_fingerprint != self._config_fingerprint:
+                if loaded.config_fingerprint not in self._accepted_config_fingerprints:
                     raise RuntimeError("Training config fingerprint mismatch in strict coverage mode.")
+                loaded.config_fingerprint = self._config_fingerprint
 
             loaded.target_steps = self._target_steps
             loaded.order_mode = self._coverage.order_mode
@@ -626,7 +710,14 @@ def _resolve_run_id(output_path: Path, requested_run_id: str | None) -> str:
     return stem if stem else "stage1"
 
 
-def _compute_training_config_fingerprint(config: PipelineConfig, plan: TrainingPlan) -> str:
+def _compute_training_config_fingerprint(
+    config: PipelineConfig,
+    plan: TrainingPlan,
+    *,
+    lora_rank: int | None = None,
+    lora_alpha: int | None = None,
+    lora_dropout: float | None = None,
+) -> str:
     payload = {
         "model_id": config.model.model_id,
         "max_context_tokens": config.model.max_context_tokens,
@@ -636,9 +727,9 @@ def _compute_training_config_fingerprint(config: PipelineConfig, plan: TrainingP
         "epochs": plan.args.epochs,
         "steps_per_save": plan.args.steps_per_save,
         "train_on_completions": plan.args.train_on_completions,
-        "lora_rank": plan.args.lora_rank,
-        "lora_alpha": plan.args.lora_alpha,
-        "lora_dropout": plan.args.lora_dropout,
+        "lora_rank": plan.args.lora_rank if lora_rank is None else int(lora_rank),
+        "lora_alpha": plan.args.lora_alpha if lora_alpha is None else int(lora_alpha),
+        "lora_dropout": plan.args.lora_dropout if lora_dropout is None else float(lora_dropout),
         "coverage": {
             "order_mode": config.training.coverage.order_mode,
             "order_seed_base": config.training.coverage.order_seed_base,
@@ -648,6 +739,48 @@ def _compute_training_config_fingerprint(config: PipelineConfig, plan: TrainingP
     }
     serialized = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(serialized).hexdigest()
+
+
+def _capacity_upgrade_resume_fingerprints(
+    config: PipelineConfig,
+    plan: TrainingPlan,
+    config_fingerprint: str,
+) -> set[str]:
+    accepted = {config_fingerprint}
+    if not plan.args.adapter_path:
+        return accepted
+
+    source_hparams = load_source_lora_hyperparams(plan.args.adapter_path)
+    if not source_hparams:
+        return accepted
+
+    try:
+        source_rank = int(source_hparams["rank"])
+        source_alpha = int(source_hparams["alpha"])
+        source_dropout = float(source_hparams["dropout"])
+    except (KeyError, TypeError, ValueError):
+        return accepted
+
+    target_rank = int(plan.args.lora_rank)
+    target_alpha = int(plan.args.lora_alpha)
+    target_dropout = float(plan.args.lora_dropout)
+    if source_rank > target_rank:
+        return accepted
+    if not math.isclose(source_dropout, target_dropout, rel_tol=1e-5, abs_tol=1e-8):
+        return accepted
+    if source_rank == target_rank and source_alpha == target_alpha:
+        return accepted
+
+    accepted.add(
+        _compute_training_config_fingerprint(
+            config,
+            plan,
+            lora_rank=source_rank,
+            lora_alpha=source_alpha,
+            lora_dropout=source_dropout,
+        )
+    )
+    return accepted
 
 
 def _resolved_training_config_snapshot(config: PipelineConfig, plan: TrainingPlan) -> dict[str, Any]:
@@ -855,32 +988,71 @@ def _prune_stage1_checkpoints(
     return deleted
 
 
-def _prepare_resume_adapter_directory(config: PipelineConfig, resume_adapter_path: Path) -> Path:
-    if resume_adapter_path.is_dir():
+def _prepare_resume_adapter_directory(
+    config: PipelineConfig,
+    resume_adapter_path: Path,
+    warnings: list[str],
+    run_id: str | None = None,
+) -> Path:
+    if resume_adapter_path.suffix.lower() != ".safetensors" and not resume_adapter_path.is_dir():
         return resume_adapter_path
-    if resume_adapter_path.suffix.lower() != ".safetensors":
-        return resume_adapter_path
-
-    adapter_config_source = config.paths.runs_dir / "adapter_config.json"
-    if not adapter_config_source.exists():
-        raise RuntimeError(
-            "Cannot resume from a safetensors checkpoint because "
-            f"`{adapter_config_source}` is missing."
-        )
 
     path_hash = hashlib.md5(str(resume_adapter_path.resolve()).encode()).hexdigest()[:8]
-    adapter_dir = config.paths.runs_dir / f"{resume_adapter_path.stem}_{path_hash}_adapter_dir"
-    adapter_dir.mkdir(parents=True, exist_ok=True)
+    dropout_tag = str(config.training.lora_dropout).replace(".", "p")
+    adapter_dir = (
+        config.paths.runs_dir
+        / f"{resume_adapter_path.stem}_{path_hash}"
+        f"_r{config.training.lora_rank}_a{config.training.lora_alpha}_d{dropout_tag}_adapter_dir"
+    )
+    handoff = materialize_lora_handoff_adapter(
+        source_adapter_path=resume_adapter_path,
+        target_dir=adapter_dir,
+        target_rank=config.training.lora_rank,
+        target_alpha=config.training.lora_alpha,
+        target_dropout=config.training.lora_dropout,
+    )
+    source_rank = handoff.get("source_rank")
+    if handoff.get("expanded"):
+        warnings.append(
+            "LoRA rank handoff: "
+            f"expanded resume adapter from rank {source_rank} to {config.training.lora_rank} "
+            f"at {adapter_dir}."
+        )
+    elif handoff.get("alpha_rescaled"):
+        warnings.append(
+            "LoRA alpha handoff: "
+            f"rescaled resume adapter alpha to {config.training.lora_alpha} at {adapter_dir}."
+        )
+    elif handoff.get("source_dropout") != handoff.get("target_dropout"):
+        warnings.append(
+            "LoRA dropout handoff: "
+            f"using training dropout {config.training.lora_dropout} with resumed weights at {adapter_dir}."
+        )
+    if "warning" in handoff:
+        warnings.append(f"LoRA handoff warning: {handoff['warning']}")
 
-    adapter_config_target = adapter_dir / "adapter_config.json"
-    adapters_target = adapter_dir / "adapters.safetensors"
-    shutil.copy2(adapter_config_source, adapter_config_target)
-    if adapters_target.exists() or adapters_target.is_symlink():
-        adapters_target.unlink()
-    try:
-        os.link(resume_adapter_path, adapters_target)
-    except OSError:
-        shutil.copy2(resume_adapter_path, adapters_target)
+    # Ensure metadata sidecar is copied to the materialized directory for Auto-Sync
+    source_meta = (
+        resume_adapter_path / CHECKPOINT_METADATA_FILE
+        if resume_adapter_path.is_dir()
+        else checkpoint_metadata_path(resume_adapter_path)
+    )
+    if source_meta.exists():
+        target_meta = adapter_dir / CHECKPOINT_METADATA_FILE
+        shutil.copy2(source_meta, target_meta)
+        if run_id and extract_iteration_from_checkpoint_name(resume_adapter_path) is not None:
+            try:
+                payload = json.loads(target_meta.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+            if not payload.get("run_id"):
+                payload["run_id"] = run_id
+                target_meta.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    else:
+        source_iteration = extract_iteration_from_checkpoint_name(resume_adapter_path)
+        if source_iteration is not None:
+            _write_checkpoint_iteration(adapter_dir, source_iteration, run_id=run_id)
+
     return adapter_dir
 
 
@@ -902,7 +1074,7 @@ def _resolve_resume_adapter_path(
         return None
     if not resolved_resume.exists():
         return resolved_resume
-    return _prepare_resume_adapter_directory(config, resolved_resume)
+    return _prepare_resume_adapter_directory(config, resolved_resume, warnings, run_id=run_id)
 
 
 def _checkpoint_cleanup_loop(
@@ -982,7 +1154,7 @@ def build_lora_namespace(
     run_id: str,
     resume_adapter_path: Path | None = None,
     iters: int | None = None,
-    save_interval: int = 100,
+    save_interval: int | None = None,
 ) -> argparse.Namespace:
     dataset_name, data_files = _dataset_loader_spec(dataset_path)
     if val_dataset_path is not None:
@@ -1009,7 +1181,9 @@ def build_lora_namespace(
         learning_rate=config.training.learning_rate,
         steps_per_report=1 if dry_run else 10,
         steps_per_eval=1 if dry_run else config.training.steps_per_eval,
-        steps_per_save=1 if dry_run else save_interval,
+        steps_per_save=1 if dry_run else (
+            save_interval if save_interval is not None else config.training.steps_per_save
+        ),
         val_batches=1 if dry_run else config.training.val_batches,
         max_seq_length=config.model.max_context_tokens,
         lora_rank=config.training.lora_rank,
@@ -1042,7 +1216,7 @@ def plan_training(
     dry_run: bool = True,
     require_full_opt_in: bool = True,
     iters: int | None = None,
-    save_interval: int = 100,
+    save_interval: int | None = None,
 ) -> TrainingPlan:
     ensure_runtime_directories(config)
     if require_full_opt_in:
@@ -1525,6 +1699,10 @@ def _vision_language_loss_fn_with_marker_sequences(
     train_on_completions: bool = False,
     assistant_id: int = DEFAULT_ASSISTANT_ID,
     assistant_marker_sequences: Sequence[Sequence[int]] = (),
+    repetition_unlikelihood_enabled: bool = False,
+    repetition_unlikelihood_weight: float = 0.0,
+    repetition_unlikelihood_window: int = 64,
+    repetition_unlikelihood_min_context: int = 16,
 ) -> Any:
     mx = import_mlx_core()
     nn = import_mlx_nn()
@@ -1618,7 +1796,65 @@ def _vision_language_loss_fn_with_marker_sequences(
                 syntax_weight = mx.pad(syntax_weight, pad_width, mode="constant", constant_values=1.0)
         ce = ce * syntax_weight
     ce = ce * effective_mask
-    return ce.sum() / mx.maximum(effective_mask.sum(), 1)
+    loss = ce.sum() / mx.maximum(effective_mask.sum(), 1)
+    if repetition_unlikelihood_enabled and repetition_unlikelihood_weight > 0.0:
+        repetition_loss = _repetition_unlikelihood_loss(
+            logits=logits,
+            labels=labels,
+            effective_mask=effective_mask,
+            window=repetition_unlikelihood_window,
+            min_context=repetition_unlikelihood_min_context,
+        )
+        loss = loss + (float(repetition_unlikelihood_weight) * repetition_loss)
+    return loss
+
+
+def _repetition_unlikelihood_loss(
+    *,
+    logits: Any,
+    labels: Any,
+    effective_mask: Any,
+    window: int,
+    min_context: int,
+) -> Any:
+    mx = import_mlx_core()
+    if window <= 0:
+        return mx.array(0.0, dtype=mx.float32)
+
+    logits = logits.astype(mx.float32)
+    labels = labels.astype(mx.int32)
+    effective_mask = effective_mask.astype(mx.float32)
+    batch_size, seq_len = labels.shape
+    if seq_len <= 1:
+        return mx.array(0.0, dtype=mx.float32)
+
+    log_probs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+    probs = mx.exp(log_probs)
+    positions = mx.repeat(mx.expand_dims(mx.arange(seq_len), 0), batch_size, axis=0)
+    position_mask = (positions >= int(min_context)).astype(mx.float32)
+
+    total = mx.array(0.0, dtype=mx.float32)
+    count = mx.array(0.0, dtype=mx.float32)
+    max_offset = min(int(window), seq_len - 1)
+    for offset in range(1, max_offset + 1):
+        previous_labels = mx.pad(
+            labels[:, :-offset],
+            [(0, 0), (offset, 0)],
+            mode="constant",
+            constant_values=0,
+        )
+        offset_mask = (positions >= offset).astype(mx.float32)
+        non_target_mask = (previous_labels != labels).astype(mx.float32)
+        valid_mask = effective_mask * position_mask * offset_mask * non_target_mask
+        candidate_probs = mx.take_along_axis(
+            probs,
+            mx.expand_dims(previous_labels, axis=-1),
+            axis=-1,
+        ).squeeze(-1)
+        penalty = -mx.log(mx.maximum(1.0 - candidate_probs, 1e-6))
+        total = total + mx.sum(penalty * valid_mask)
+        count = count + mx.sum(valid_mask)
+    return total / mx.maximum(count, 1.0)
 
 
 def _run_completion_mask_preflight(
@@ -1680,22 +1916,12 @@ def _build_strict_iterate_batches(
         if batch_size != 1:
             raise RuntimeError("Strict coverage mode currently requires batch_size=1.")
 
-        pending_example_index: int | None = None
-        try:
-            while True:
-                if pending_example_index is not None:
-                    tracker.mark_batch_complete(pending_example_index)
-                    pending_example_index = None
-
-                example_index = tracker.peek_next_example_index()
-                item = dataset[example_index]
-                batch = _build_training_batch([item], max_seq_length=max_seq_length)
-                pending_example_index = example_index
-                yield batch
-        finally:
-            if pending_example_index is not None:
-                tracker.mark_batch_complete(pending_example_index)
-            tracker.save(force=True)
+        while True:
+            example_index = tracker.peek_next_example_index()
+            item = dataset[example_index]
+            batch = _build_training_batch([item], max_seq_length=max_seq_length)
+            batch["__tikz_example_index__"] = example_index
+            yield batch
 
     return _iterate_batches
 
@@ -1980,6 +2206,19 @@ def _execute_training(
             dataset_snapshot_id_for_checkpoints = dataset_fingerprint_obj.sha256
             config_fingerprint = config_fingerprint_for_checkpoints
             assert config_fingerprint is not None
+            accepted_config_fingerprints = _capacity_upgrade_resume_fingerprints(
+                config,
+                plan,
+                config_fingerprint,
+            )
+            if len(accepted_config_fingerprints) > 1:
+                plan.warnings.append(
+                    "Strict coverage accepts this resume as a LoRA capacity upgrade: "
+                    f"source_checkpoint={plan.args.adapter_path}, "
+                    f"target_rank={plan.args.lora_rank}, "
+                    f"target_alpha={plan.args.lora_alpha}, "
+                    f"target_lora_layers={plan.args.lora_num_layers}."
+                )
             run_dir = config.paths.runs_dir / run_id
             coverage_tracker = StrictCoverageTracker(
                 config=config,
@@ -1990,10 +2229,44 @@ def _execute_training(
                 total_examples=len(dataset),
                 target_steps=configured_iters,
                 resume_requested=plan.args.adapter_path is not None,
+                accepted_config_fingerprints=accepted_config_fingerprints,
             )
             _acquire_run_lock(coverage_tracker.lock_path, run_id)
             lock_acquired = True
             _write_run_metadata(tracker=coverage_tracker, plan=plan, config=config)
+
+            if plan.args.adapter_path:
+                resume_info = _read_checkpoint_resume_info(Path(plan.args.adapter_path))
+                if resume_info is not None:
+                    same_run_resume = resume_info.run_id == run_id
+                    if same_run_resume:
+                        if resume_info.global_step > coverage_tracker.state.target_steps:
+                            raise RuntimeError(
+                                "Resume checkpoint step exceeds this run's target steps: "
+                                f"checkpoint_step={resume_info.global_step}, "
+                                f"target_steps={coverage_tracker.state.target_steps}."
+                            )
+                        if coverage_tracker.state.global_step != resume_info.global_step:
+                            action = (
+                                "Rolling back"
+                                if coverage_tracker.state.global_step > resume_info.global_step
+                                else "Advancing"
+                            )
+                            plan.warnings.append(
+                                "AUTO-SYNC: "
+                                f"{action} coverage tracker from {coverage_tracker.state.global_step} "
+                                f"to {resume_info.global_step} to match resumed weights "
+                                f"({resume_info.source})."
+                            )
+                            coverage_tracker.sync_to_global_step(resume_info.global_step)
+                    else:
+                        checkpoint_run = resume_info.run_id or "<missing>"
+                        plan.warnings.append(
+                            "Resume adapter metadata does not identify this run "
+                            f"(checkpoint run_id={checkpoint_run}, current run_id={run_id}); "
+                            "treating it as a warm-start and leaving coverage at "
+                            f"global_step={coverage_tracker.state.global_step}."
+                        )
 
             remaining_iters = coverage_tracker.remaining_steps
             if remaining_iters <= 0:
@@ -2001,14 +2274,19 @@ def _execute_training(
                     "Coverage target already reached; no additional training iterations were scheduled."
                 )
                 return plan
+            plan.args.iters = coverage_tracker.state.target_steps
+            plan.args.remaining_iters = remaining_iters
+            plan.args._tikz_global_step_offset = coverage_tracker.state.global_step
+            plan.args._tikz_total_target_iters = coverage_tracker.state.target_steps
             configured_iters = remaining_iters
             plan.warnings.append(
-                f"Strict coverage enabled: epoch={coverage_tracker.state.epoch} "
-                f"global_step={coverage_tracker.state.global_step} "
-                f"next_example_index={coverage_tracker.state.next_example_index}"
+                "Strict coverage schedule: "
+                f"start_global_step={coverage_tracker.state.global_step}, "
+                f"remaining_iters={remaining_iters}, "
+                f"target_steps={coverage_tracker.state.target_steps}."
             )
-
-        plan.args.iters = configured_iters
+        else:
+            plan.args.iters = configured_iters
 
         run_id = str(plan.args.run_id)
         run_dir_for_named = coverage_tracker.run_dir if coverage_tracker is not None else (config.paths.runs_dir / run_id)
@@ -2339,20 +2617,53 @@ def _execute_training(
                 f"LoRA layer limiting: kept last {lora_num_layers}/{total_layers} layers, "
                 f"unwrapped {unwrapped_count} LoRA modules from early layers"
             )
-        # Use the definitively resolved iters for the scheduler to ensure proper warmup/decay
-        total_steps = configured_iters
-        warmup_steps = int(0.10 * total_steps)  # 10% warmup; stabilises early-step gradient noise
+        # Build the scheduler against the full target run, then offset it on
+        # resume so warmup/decay continue from the checkpoint's global step.
+        legacy_resume_offset = int(getattr(plan.args, "resume_offset", 0) or 0)
+        strict_global_offset = int(getattr(plan.args, "_tikz_global_step_offset", 0) or 0)
+        schedule_step_offset = max(legacy_resume_offset, strict_global_offset)
+        schedule_total_steps = int(
+            getattr(plan.args, "_tikz_total_target_iters", configured_iters + schedule_step_offset)
+            or (configured_iters + schedule_step_offset)
+        )
+        schedule_total_steps = max(schedule_total_steps, configured_iters + schedule_step_offset, 1)
+        schedule_grad_accum = max(1, int(plan.args.gradient_accumulation_steps))
+        if schedule_step_offset % schedule_grad_accum != 0:
+            raise RuntimeError(
+                "Resume checkpoint is not on a gradient accumulation boundary: "
+                f"global_step_offset={schedule_step_offset}, "
+                f"gradient_accumulation_steps={schedule_grad_accum}."
+            )
+        schedule_total_updates = max(1, math.ceil(schedule_total_steps / schedule_grad_accum))
+        schedule_update_offset = schedule_step_offset // schedule_grad_accum
+        warmup_steps = int(config.training.lr_warmup_fraction * schedule_total_updates)
+        warmup_start_lr = 0.0
+        if schedule_step_offset > 0:
+            plan.warnings.append(
+                "Resume LR schedule: "
+                f"global_step_offset={schedule_step_offset}, "
+                f"optimizer_update_offset={schedule_update_offset}, "
+                f"remaining_iters={configured_iters}, "
+                f"target_steps={schedule_total_steps}, "
+                f"target_optimizer_updates={schedule_total_updates}; warmup is not restarted."
+            )
         # Minimum end LR = 1% of peak to avoid wasting the final ~10% of training steps.
         cosine_end_lr = plan.args.learning_rate * 0.01
         weight_decay = config.training.weight_decay  # default 0.01 per plan recommendation
         if warmup_steps > 0:
-            linear = optim.linear_schedule(0.0, plan.args.learning_rate, steps=warmup_steps)
-            cosine = optim.cosine_decay(plan.args.learning_rate, total_steps - warmup_steps, end=cosine_end_lr)
-            lr_schedule = optim.join_schedules([linear, cosine], [warmup_steps])
-            optimizer = optim.AdamW(learning_rate=lr_schedule, weight_decay=weight_decay)
+            linear = optim.linear_schedule(warmup_start_lr, plan.args.learning_rate, steps=warmup_steps)
+            cosine_steps = max(1, schedule_total_updates - warmup_steps)
+            cosine = optim.cosine_decay(plan.args.learning_rate, cosine_steps, end=cosine_end_lr)
+            base_lr_schedule = optim.join_schedules([linear, cosine], [warmup_steps])
         else:
-            cosine = optim.cosine_decay(plan.args.learning_rate, total_steps, end=cosine_end_lr)
-            optimizer = optim.AdamW(learning_rate=cosine, weight_decay=weight_decay)
+            base_lr_schedule = optim.cosine_decay(plan.args.learning_rate, schedule_total_updates, end=cosine_end_lr)
+
+        if schedule_update_offset > 0:
+            def lr_schedule(step: Any) -> Any:
+                return base_lr_schedule(step + schedule_update_offset)
+        else:
+            lr_schedule = base_lr_schedule
+        optimizer = optim.AdamW(learning_rate=lr_schedule, weight_decay=weight_decay)
         if lora_num_layers is not None:
             trainable_params, optimizer_state_entries = _validate_lora_unwrap_and_optimizer_state(
                 model=model,
@@ -2377,8 +2688,12 @@ def _execute_training(
                 "trainable_parameter_leaf_count": trainable_params,
                 "optimizer_state_leaf_count": optimizer_state_entries,
                 "configured_iters": configured_iters,
+                "target_total_iters": schedule_total_steps,
+                "global_step_offset": schedule_step_offset,
+                "target_optimizer_updates": schedule_total_updates,
+                "optimizer_update_offset": schedule_update_offset,
                 "warmup_steps": warmup_steps,
-                "warmup_fraction": 0.1,
+                "warmup_fraction": config.training.lr_warmup_fraction,
                 "peak_learning_rate": plan.args.learning_rate,
                 "weight_decay": weight_decay,
                 "cosine_end_learning_rate": cosine_end_lr,
@@ -2402,6 +2717,12 @@ def _execute_training(
             grad_clip=plan.args.grad_clip,
             gradient_accumulation_steps=plan.args.gradient_accumulation_steps,
             full_finetune=plan.args.full_finetune,
+        )
+        training_args.resume_offset = getattr(plan.args, "resume_offset", 0)
+        training_args._tikz_global_step_offset = getattr(plan.args, "_tikz_global_step_offset", None)
+        training_args._tikz_total_target_iters = getattr(plan.args, "_tikz_total_target_iters", None)
+        training_args._tikz_gradient_telemetry_path = (
+            run_dir_for_named / "gradient_clip_telemetry.jsonl"
         )
 
         checkpoint_dir = Path(plan.args.output_path).expanduser().resolve().parent
@@ -2444,6 +2765,8 @@ def _execute_training(
             )
         else:
             tikz_eval_at = frozenset(m for m in milestones_abs if 1 <= m <= configured_iters)
+        if coverage_tracker is not None or val_dataset_messages is not None:
+            training_args._tikz_eval_at = tikz_eval_at
         if val_dataset_messages is not None:
             if not tikz_eval_at:
                 tikz_eval_at = frozenset({configured_iters})
@@ -2451,6 +2774,7 @@ def _execute_training(
 
         sft_trainer_module = sft_trainer
         if coverage_tracker is not None:
+            training_args._tikz_mark_batch_complete = coverage_tracker.mark_batch_complete
             original_iterate_batches = sft_trainer.iterate_batches
             sft_trainer.iterate_batches = _build_strict_iterate_batches(
                 tracker=coverage_tracker,
@@ -2484,8 +2808,6 @@ def _execute_training(
                 "rank": config.training.lora_rank,
                 "alpha": config.training.lora_alpha,
                 "dropout": config.training.lora_dropout,
-                "lora_layers": config.training.lora_num_layers,
-                "target_modules": ["q_proj", "v_proj"],
             }
             adapter_config_path.write_text(json.dumps(adapter_config, indent=2), encoding="utf-8")
 
@@ -2566,6 +2888,10 @@ def _execute_training(
         loss_fn = partial(
             _vision_language_loss_fn_with_marker_sequences,
             assistant_marker_sequences=assistant_marker_sequences,
+            repetition_unlikelihood_enabled=config.training.repetition_unlikelihood_enabled,
+            repetition_unlikelihood_weight=config.training.repetition_unlikelihood_weight,
+            repetition_unlikelihood_window=config.training.repetition_unlikelihood_window,
+            repetition_unlikelihood_min_context=config.training.repetition_unlikelihood_min_context,
         )
 
         from .adapter_manifest import write_adapter_load_manifest
@@ -2673,7 +2999,8 @@ def run_training(
     run_id: str | None = None,
     dry_run: bool = False,
     iters: int | None = None,
-    save_interval: int = 100,
+    save_interval: int | None = None,
+    resume_offset: int = 0,
 ) -> TrainingPlan:
     plan = plan_training(
         config,
@@ -2689,6 +3016,14 @@ def run_training(
     if iters is not None:
         plan.args.iters = iters
         plan.args.epochs = None
+
+    if config.training.coverage.enabled and resume_offset > 0:
+        raise RuntimeError(
+            "Strict coverage mode refuses filename-derived resume offsets. "
+            "Resume from the adapter checkpoint only; coverage_state tracks the exact next example."
+        )
+
+    plan.args.resume_offset = resume_offset
 
     if dry_run:
         return plan

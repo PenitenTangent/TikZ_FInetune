@@ -1,0 +1,18 @@
+{
+  "configured_iters": 800,
+  "cosine_end_learning_rate": 4e-08,
+  "lora_cutoff_layer_index_exclusive": 14,
+  "lora_num_layers": 28,
+  "max_seq_length": 768,
+  "optimizer_state_leaf_count": 2510,
+  "peak_learning_rate": 4e-06,
+  "resume_adapter_path": null,
+  "run_id": "sweep_stage1_r16_lr4p0e-06_drop0p03_clip0p5_wd0p01_layers28",
+  "total_transformer_layers": 42,
+  "trainable_parameter_leaf_count": 1255,
+  "val_batches": 8,
+  "warmup_fraction": 0.1,
+  "warmup_steps": 80,
+  "weight_decay": 0.01,
+  "written_at": "2026-05-14T09:48:31.564920+00:00"
+}

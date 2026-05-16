@@ -2,13 +2,13 @@
 # Use this when Rank 24/32 runs collapse or show prompt-contract poisoning.
 
 training:
-  learning_rate: 3.0e-06       # 10x lower than default Stage 1
-  lora_rank: 8                 # Lower capacity = lower risk of overfitting to noise
-  lora_alpha: 16               # Standard alpha=2*rank
+  learning_rate: 3.0e-06       # Conservative Stage 1 recovery rate
+  lora_rank: 16                # Lower than Rank 24/32, but still enough TikZ capacity
+  lora_alpha: 32               # Standard alpha=2*rank
   lora_num_layers: 28
   weight_decay: 0.1            # Higher regularization
-  steps_per_save: 50           # Save more frequently for better selection
-  steps_per_eval: 50
+  steps_per_save: 512          # Must align with grad_accum=8
+  steps_per_eval: 64
   
 model:
   max_context_tokens: 768      # Stick to verified context length

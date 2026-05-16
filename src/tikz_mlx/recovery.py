@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .bad_patterns import check_bad_patterns
+from .prompting import PROMPT_CONTRACT_VERSION, build_generation_prompt, prompt_template_sha256
 from .token_stats import command_counts, dominant_command_ratio, COORD_RE
 
 SUBSTANTIVE_COMMANDS = {
@@ -55,7 +56,7 @@ def substantive_features(text: str) -> dict[str, Any]:
         
     _, _, dom_ratio = dominant_command_ratio(text)
     
-    has_tikz_environment = bool(re.search(r"\\begin\{(?:tikzpicture|tikz-cd|circuitikz|axis)\}", text, re.IGNORECASE))
+    has_tikz_environment = bool(re.search(r"\\begin\{(?:tikzpicture|tikz-cd|tikzcd|circuitikz|axis)\}", text, re.IGNORECASE))
     coordinate_count = len(COORD_RE.findall(text))
     
     # Simple heuristic for labels: node[...] {text}
@@ -103,7 +104,7 @@ DEFAULT_GATE_CONFIG: dict[str, float] = {
     "truncation_rate_max": 0.10,
 }
 
-RECOVERY_CONTRACT_VERSION = "tikz_partial_decode_v1"
+RECOVERY_CONTRACT_VERSION = PROMPT_CONTRACT_VERSION
 RECOVERY_EVAL_SETS = ("sentinel_32", "ablation_100", "promotion_120", "stability_emd_32")
 PREAMBLE_MARKER = "--- Starting Preamble ---"
 DEFAULT_MODE_CAPS: dict[str, int | None] = {
@@ -116,7 +117,7 @@ DEFAULT_MODE_CAPS: dict[str, int | None] = {
 
 COMMAND_RE = re.compile(r"\\[A-Za-z@]+")
 HIGH_PRECISION_NUMBER_RE = re.compile(r"-?\d+\.\d{4,}")
-ENV_RE = re.compile(r"\\begin\{(?:tikzpicture|tikz-cd|circuitikz|axis)\}", re.IGNORECASE)
+ENV_RE = re.compile(r"\\begin\{(?:tikzpicture|tikz-cd|tikzcd|circuitikz|axis)\}", re.IGNORECASE)
 STEALTH_STYLE_RE = re.compile(r">=\s*[sS]tealth,")
 
 
@@ -242,7 +243,39 @@ def _set_role_text(record: dict[str, Any], role: str, fallback_index: int, text:
 
 def repair_assistant_contract(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     repaired = json.loads(json.dumps(record))
+    original_user_text = _single_role_text(repaired, "user", 0)
     original_text = _single_role_text(repaired, "assistant", 1)
+
+    description = original_user_text.strip()
+    marker = "according to the following requirements:"
+    marker_index = description.lower().find(marker)
+    if marker_index >= 0:
+        description = description[marker_index + len(marker):].strip()
+    description = re.sub(r"```(?:latex)?", "", description, flags=re.IGNORECASE).strip()
+    for stop_marker in (
+        "\n\n[GEOMETRY HINTS]",
+        "\n[GEOMETRY HINTS]",
+        "\n\nOutput constraints:",
+        "\nOutput constraints:",
+        PREAMBLE_MARKER,
+    ):
+        stop_index = description.find(stop_marker)
+        if stop_index >= 0:
+            description = description[:stop_index].strip()
+
+    metadata = repaired.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        repaired["metadata"] = metadata
+    generation_mode = metadata.get("generation_mode")
+    geometry_hints = metadata.get("geometry_hints")
+    user_text = build_generation_prompt(
+        description,
+        generation_mode=generation_mode if isinstance(generation_mode, str) else None,
+        geometry_hints=geometry_hints if isinstance(geometry_hints, dict) else None,
+    )
+    user_updated = _set_role_text(repaired, "user", 0, user_text)
+
     working = re.sub(r"```(?:latex)?", "", original_text, flags=re.IGNORECASE).strip()
     begin_match = re.search(r"\\begin\{document\}", working, flags=re.IGNORECASE)
     if begin_match:
@@ -256,13 +289,19 @@ def repair_assistant_contract(record: dict[str, Any]) -> tuple[dict[str, Any], d
         working = working[env_match.start():]
 
     assistant_text = working.strip() + "\n```\n"
-    updated = _set_role_text(repaired, "assistant", 1, assistant_text)
+    assistant_updated = _set_role_text(repaired, "assistant", 1, assistant_text)
+    metadata["prompt_contract_version"] = PROMPT_CONTRACT_VERSION
+    metadata["prompt_template_sha256"] = prompt_template_sha256()
+    metadata["target_contract"] = "body_only_environment"
+
     audit = {
         "sample_id": str(record.get("sample_id", "")),
-        "changed": original_text != assistant_text,
-        "updated": updated,
+        "changed": original_user_text != user_text or original_text != assistant_text,
+        "updated": user_updated and assistant_updated,
         "original_sha256": text_sha256(original_text),
         "repaired_sha256": text_sha256(assistant_text),
+        "original_user_sha256": text_sha256(original_user_text),
+        "repaired_user_sha256": text_sha256(user_text),
         "original_length": len(original_text),
         "repaired_length": len(assistant_text),
         "original_violations": validate_partial_decode_contract(record),
@@ -281,12 +320,28 @@ def validate_partial_decode_contract(record: dict[str, Any]) -> list[str]:
         violations.append("user_count_not_one")
     if len(assistant_texts) != 1:
         violations.append("assistant_count_not_one")
-    if user_text.count(PREAMBLE_MARKER) != 1:
-        violations.append("preamble_marker_count")
     if user_text.count("```latex") != 1:
         violations.append("opening_latex_fence_count")
+    user_marker_violations = {
+        r"\\documentclass(?:\[[^\]]*\])?\{": "user_documentclass",
+        r"\\begin\{document\}": "user_begin_document",
+        r"\\end\{document\}": "user_end_document",
+        r"\\usepackage(?:\[[^\]]*\])?\{": "user_usepackage",
+        r"\\PreviewEnvironment\{": "user_preview_environment",
+        r"\\usetikzlibrary\{": "user_usetikzlibrary",
+        re.escape(PREAMBLE_MARKER): "user_preamble_marker",
+    }
+    for pattern, violation in user_marker_violations.items():
+        if re.search(pattern, user_text):
+            violations.append(violation)
     if assistant_text.count("```") != 1:
         violations.append("closing_fence_count")
+    if not re.match(
+        r"^\s*\\begin\{(?:tikzpicture|tikz-cd|tikzcd|circuitikz|axis|tikzpicture\*)\}",
+        assistant_text,
+        flags=re.IGNORECASE,
+    ):
+        violations.append("assistant_env_start")
     marker_violations = {
         "\\documentclass": "assistant_documentclass",
         "\\begin{document}": "assistant_begin_document",

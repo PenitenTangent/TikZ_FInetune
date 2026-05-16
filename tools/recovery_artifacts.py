@@ -166,17 +166,28 @@ def _cmd_build_clean_stage_split(args: argparse.Namespace) -> int:
 
 def _cmd_repair_contract(args: argparse.Namespace) -> int:
     repaired_records: list[dict] = []
+    rejected_records: list[dict] = []
     audit_items: list[dict] = []
     for record in iter_jsonl(Path(args.input)):
         repaired, item_audit = repair_assistant_contract(record)
-        repaired_records.append(repaired)
+        if item_audit["repaired_violations"] and args.drop_failed:
+            rejected = json.loads(json.dumps(record))
+            rejected["_reject_reasons"] = [
+                f"contract_repair:{item}" for item in item_audit["repaired_violations"]
+            ]
+            rejected_records.append(rejected)
+        else:
+            repaired_records.append(repaired)
         if item_audit["changed"] or item_audit["original_violations"] or item_audit["repaired_violations"]:
             audit_items.append(item_audit)
     write_jsonl(Path(args.output), repaired_records)
+    if args.rejected_output:
+        write_jsonl(Path(args.rejected_output), rejected_records)
     audit = {
         "input": args.input,
         "output": args.output,
         "records": len(repaired_records),
+        "dropped_failed_repair": len(rejected_records),
         "changed": sum(1 for item in audit_items if item["changed"]),
         "failed_after_repair": sum(1 for item in audit_items if item["repaired_violations"]),
         "examples": audit_items[:100],
@@ -185,6 +196,8 @@ def _cmd_repair_contract(args: argparse.Namespace) -> int:
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     audit_path.write_text(json.dumps(audit, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(audit, indent=2, sort_keys=True))
+    if args.drop_failed:
+        return 0
     return 0 if audit["failed_after_repair"] == 0 else 1
 
 
@@ -363,6 +376,8 @@ def build_parser() -> argparse.ArgumentParser:
     repair.add_argument("--input", required=True)
     repair.add_argument("--output", required=True)
     repair.add_argument("--audit-output", required=True)
+    repair.add_argument("--drop-failed", action="store_true")
+    repair.add_argument("--rejected-output")
     repair.set_defaults(func=_cmd_repair_contract)
 
     clean_stage = subparsers.add_parser(

@@ -68,6 +68,7 @@ class CompileSummary:
     working_dir: Path | None = None
 
 
+
 @dataclass(slots=True)
 class GenerationRequest:
     description: str

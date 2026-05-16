@@ -46,6 +46,8 @@ def _parse_iter(line: str, fallback_total: int | None) -> tuple[int | None, int 
     # Skip JSON payloads like "iters": 1000
     if stripped.startswith('"') and stripped.endswith(","):
         return None, fallback_total
+    if "starting training" in stripped.lower():
+        return None, fallback_total
 
     for pat in ITER_PATTERNS:
         m = pat.search(line)
@@ -67,11 +69,17 @@ def _parse_speed(line: str) -> float | None:
     return None
 
 
-def _scan_checkpoint_iter(checkpoint_dir: Path | None) -> int | None:
+def _scan_checkpoint_iter(checkpoint_dir: Path | None, *, min_mtime: float | None = None) -> int | None:
     if checkpoint_dir is None or not checkpoint_dir.exists():
         return None
     max_iter: int | None = None
     for path in checkpoint_dir.glob("*_adapters.safetensors"):
+        if min_mtime is not None:
+            try:
+                if path.stat().st_mtime < min_mtime:
+                    continue
+            except OSError:
+                continue
         stem = path.name.split("_", 1)[0]
         if stem.isdigit():
             value = int(stem)
@@ -152,7 +160,7 @@ def run_monitor(args: argparse.Namespace) -> int:
                 # no new line, just refresh display
                 now = time.time()
                 if checkpoint_dir is not None and (now - last_ckpt_scan) >= 1.0:
-                    ckpt_iter = _scan_checkpoint_iter(checkpoint_dir)
+                    ckpt_iter = _scan_checkpoint_iter(checkpoint_dir, min_mtime=start)
                     if ckpt_iter is not None and (cur_iter is None or ckpt_iter > cur_iter):
                         cur_iter = ckpt_iter
                         iter_history.append((now, cur_iter))

@@ -449,7 +449,7 @@ def _generate_variant_samples(
                 top_p=1.0,
                 top_k=64,
                 min_p=0.05,
-                repetition_penalty=1.1,
+                repetition_penalty=1.2,
             )
         )
         raw_response = generation.text
@@ -585,7 +585,7 @@ def run_strict_ab_eval(
                     top_p=1.0,
                     top_k=64,
                     min_p=0.05,
-                    repetition_penalty=1.1,
+                    repetition_penalty=1.2,
                 )
             )
             raw_response = generation.text

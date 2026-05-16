@@ -1,0 +1,20 @@
+{
+  "stage": "sweep_stage1_r16_lr4p0e-06_drop0p03_clip0p5_wd0p01_layers28",
+  "base_model_id": "mlx-community/gemma-4-e4b-it-6bit",
+  "adapter_path": "outputs/hparam_sweeps/stage1_20260514_114805/adapters/stage1_r16_lr4p0e-06_drop0p03_clip0p5_wd0p01_layers28.safetensors",
+  "adapter_hash": null,
+  "config_path": "/Users/andrisoueslati/Code/TikZ/outputs/hparam_sweeps/stage1_20260514_114805/configs/stage1_r16_lr4p0e-06_drop0p03_clip0p5_wd0p01_layers28.yaml",
+  "config_hash": "05b089c0729070012eee282421cb7776efa097c4e5ba389d3a7e043b4d02e7f5",
+  "lora_params": {
+    "lora_rank": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.03,
+    "lora_num_layers": 28
+  },
+  "source_resume_adapter": null,
+  "source_resume_adapter_hash": null,
+  "dataset_path": "/Users/andrisoueslati/Code/TikZ/data/prepared/curriculum/train_stage1_clean.jsonl",
+  "dataset_hash": "0de86be99391ed18b2d95ae8d2d523a3b345a89e8f9bb943180ee9f894da1159",
+  "pretokenized_cache_path": "/Users/andrisoueslati/Code/TikZ/data/prepared/curriculum/train_stage1_clean_tokenized.npy",
+  "pretokenized_cache_hash": "9a155f65edf1557c76058b764c982e0849d42d165f0d22d4f59aa0540cb5dc80"
+}

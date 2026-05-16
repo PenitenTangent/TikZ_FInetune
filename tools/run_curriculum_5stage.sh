@@ -177,6 +177,9 @@ PY
   elif [ -f "$adapter_output" ]; then
     mkdir -p "$(dirname "$published_adapter")"
     cp -f "$adapter_output" "$published_adapter"
+    if [ -f "${adapter_output}.metadata.json" ]; then
+      cp -f "${adapter_output}.metadata.json" "${published_adapter}.metadata.json"
+    fi
     echo "  Published adapter: $published_adapter"
   else
     echo "  No adapter file produced (likely dry-run); skipping publish copy."

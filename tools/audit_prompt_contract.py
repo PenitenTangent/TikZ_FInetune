@@ -52,7 +52,7 @@ ASSISTANT_FORBIDDEN = [
 
 # Assistant target must start with one of these environments
 VALID_ENV_STARTS = re.compile(
-    r"^\s*\\begin\{(?:tikzpicture|tikz-cd|circuitikz|axis|tikzpicture\*)\}",
+    r"^\s*\\begin\{(?:tikzpicture|tikz-cd|tikzcd|circuitikz|axis|tikzpicture\*)\}",
     re.IGNORECASE,
 )
 

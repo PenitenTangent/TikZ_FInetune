@@ -712,6 +712,7 @@ def _execute_stage2_training(config: PipelineConfig, plan: Stage2TrainingPlan) -
         save_adapter,
         tree_map,
     ) = _import_stage2_runtime()
+    import mlx.utils as mx_utils
 
     samples = load_stage2_samples(plan.dataset_path)
     if not samples:
@@ -1009,7 +1010,11 @@ def _execute_stage2_training(config: PipelineConfig, plan: Stage2TrainingPlan) -
                 fail_on_invalid_rollout=plan.args.fail_on_invalid_rollout,
             )
             loss, grad = loss_value_and_grad(model, batch)
-            grad = tree_map(lambda value: mx.clip(value, -plan.args.grad_clip, plan.args.grad_clip), grad)
+            # Proper L2 norm-based clipping (same fix as Stage 1)
+            flat_grad = mx.concatenate([v.reshape(-1) for _, v in mx_utils.tree_flatten(grad)])
+            grad_norm = mx.linalg.norm(flat_grad)
+            clip_scale = mx.minimum(plan.args.grad_clip / mx.maximum(grad_norm, 1e-8), 1.0)
+            grad = tree_map(lambda g: g * clip_scale, grad)
             optimizer.update(model, grad)
             mx.eval(model.state, optimizer.state, loss)
             clear_mlx_cache()

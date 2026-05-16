@@ -1,12 +1,14 @@
 import argparse
 import json
 import os
+import shutil
 import socket
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import tikz_mlx.train as train_module
 from tikz_mlx.adapter_config_io import validate_resumed_adapter_lora_hyperparams
 from tikz_mlx.checkpointing import checkpoint_metadata_path
 from tikz_mlx.curriculum_diagnostics import (
@@ -25,9 +27,12 @@ from tikz_mlx.train import (
     EnhancedVisionDataset,
     PackedPreTokenizedDataset,
     StrictCoverageTracker,
+    TrainingPlan,
     _acquire_run_lock,
     _build_assistant_marker_sequences,
     _build_syntax_weight_lookup,
+    _build_strict_iterate_batches,
+    _capacity_upgrade_resume_fingerprints,
     _build_training_batch,
     _compute_assistant_response_indices,
     _compute_mask_zero_fraction,
@@ -35,11 +40,15 @@ from tikz_mlx.train import (
     _dataset_loader_spec,
     _load_and_validate_pack_audit,
     _prune_stage1_checkpoints,
+    _read_checkpoint_iteration,
+    _read_checkpoint_resume_info,
+    _repetition_unlikelihood_loss,
     _release_run_lock,
     _resolve_training_iterations,
     _vision_language_loss_fn_with_marker_sequences,
     build_lora_namespace,
     plan_training,
+    run_training,
 )
 from tikz_mlx.train_stage2 import (
     _should_persist_rollout_artifacts,
@@ -130,6 +139,10 @@ def test_load_config_exposes_stage2_defaults() -> None:
     assert config.training.reward_weighted_loss is False
     assert config.training.reward_weight_field == "sample_weight"
     assert config.training.syntax_weighted_loss is True
+    assert config.training.repetition_unlikelihood_enabled is True
+    assert config.training.repetition_unlikelihood_weight == pytest.approx(0.05)
+    assert config.training.repetition_unlikelihood_window == 64
+    assert config.training.repetition_unlikelihood_min_context == 16
     assert config.training.syntax_structural_weight == pytest.approx(5.0)
     assert config.training.syntax_command_weight == pytest.approx(2.0)
     assert config.training.syntax_coordinate_weight == pytest.approx(1.0)
@@ -149,6 +162,19 @@ def test_load_config_exposes_stage2_defaults() -> None:
     assert config.training.stage2.rollout_debug_force_final_save is True
 
 
+def test_load_config_rejects_invalid_repetition_unlikelihood_values(tmp_path: Path) -> None:
+    config_text = CONFIG_PATH.read_text(encoding="utf-8")
+    config_text = config_text.replace(
+        "  repetition_unlikelihood_weight: 0.05\n",
+        "  repetition_unlikelihood_weight: -0.01\n",
+    )
+    bad_config = tmp_path / "bad.yaml"
+    bad_config.write_text(config_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="repetition_unlikelihood_weight"):
+        load_config(bad_config)
+
+
 def test_load_config_exposes_inference_candidate_and_decoding_profile() -> None:
     config = load_config(CONFIG_PATH)
     assert config.inference.initial_candidates == 4
@@ -164,10 +190,12 @@ def test_clean_adapter_config_uses_plain_ce_and_staged_lr() -> None:
     config = load_config(CLEAN_CONFIG_PATH)
 
     assert config.training.train_dataset_path.as_posix().endswith("data/prepared/train_unified.jsonl")
-    assert config.training.learning_rate == pytest.approx(2e-5)
-    assert config.training.lora_num_layers == 14
-    assert config.training.lora_rank == 8
-    assert config.training.lora_alpha == 16
+    assert config.training.learning_rate == pytest.approx(4e-6)
+    assert config.training.weight_decay == pytest.approx(0.05)
+    assert config.training.lora_num_layers == 28
+    assert config.training.lora_rank == 16
+    assert config.training.lora_alpha == 32
+    assert config.training.lora_dropout == pytest.approx(0.03)
     assert config.training.resume_adapter_path is None
     assert config.training.auto_resume_latest_checkpoint is False
     assert config.training.reward_weighted_loss is False
@@ -338,14 +366,33 @@ def test_require_stage3_pretokenize_long_coverage_passes_and_fails(tmp_path: Pat
         require_stage3_pretokenize_long_coverage(audit_path=bad_audit, min_fraction_ge_1024=0.02)
 
 
-def test_curriculum_stage_configs_use_lora_num_layers_28() -> None:
+def test_curriculum_stage_configs_use_lora_num_layers_28_and_strict_coverage() -> None:
     repo = Path(__file__).resolve().parents[1]
-    for name in ("curriculum_stage1.yaml", "curriculum_stage2.yaml", "curriculum_stage3.yaml"):
+    for name in (
+        "curriculum_stage1.yaml",
+        "curriculum_stage2.yaml",
+        "curriculum_stage3.yaml",
+        "curriculum_stage4.yaml",
+        "curriculum_stage5.yaml",
+    ):
         path = repo / "configs" / name
         if not path.exists():
             continue
         cfg = load_config(path)
         assert cfg.training.lora_num_layers == 28
+        assert cfg.training.coverage.enabled is True
+        assert cfg.training.repetition_unlikelihood_enabled is True
+        assert cfg.training.repetition_unlikelihood_weight == pytest.approx(0.05)
+        assert cfg.training.repetition_unlikelihood_window == 64
+        assert cfg.training.repetition_unlikelihood_min_context == 16
+
+
+def test_strict_coverage_rejects_filename_resume_offset() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    cfg = load_config(repo / "configs" / "curriculum_stage1.yaml")
+
+    with pytest.raises(RuntimeError, match="filename-derived resume offsets"):
+        run_training(cfg, dry_run=True, resume_offset=1000)
 
 
 def test_filter_val_jsonl_by_min_metadata_tokens_keeps_long_rows(tmp_path: Path) -> None:
@@ -782,6 +829,116 @@ def test_build_training_batch_handles_leading_batch_dimension() -> None:
     assert attention_mask[0, :4].tolist() == [1, 1, 1, 1]
 
 
+def test_repetition_unlikelihood_penalizes_recent_non_target_probability() -> None:
+    _skip_if_mlx_unavailable()
+    import mlx.core as mx
+
+    logits_clean = mx.zeros((1, 5, 8), dtype=mx.float32)
+    logits_repetitive = mx.array(np.zeros((1, 5, 8), dtype=np.float32))
+    logits_repetitive = logits_repetitive.at[0, 4, 2].add(8.0)
+    labels = mx.array([[1, 2, 3, 2, 4]], dtype=mx.int32)
+    mask = mx.ones((1, 5), dtype=mx.float32)
+
+    clean = _repetition_unlikelihood_loss(
+        logits=logits_clean,
+        labels=labels,
+        effective_mask=mask,
+        window=4,
+        min_context=0,
+    )
+    repetitive = _repetition_unlikelihood_loss(
+        logits=logits_repetitive,
+        labels=labels,
+        effective_mask=mask,
+        window=4,
+        min_context=0,
+    )
+
+    mx.eval(clean, repetitive)
+    assert repetitive.item() > clean.item()
+
+
+def test_repetition_unlikelihood_excludes_current_gold_repetition() -> None:
+    _skip_if_mlx_unavailable()
+    import mlx.core as mx
+
+    logits = mx.array(np.zeros((1, 4, 8), dtype=np.float32))
+    logits = logits.at[0, 3, 2].add(8.0)
+    labels = mx.array([[2, 2, 2, 2]], dtype=mx.int32)
+    mask = mx.ones((1, 4), dtype=mx.float32)
+
+    loss = _repetition_unlikelihood_loss(
+        logits=logits,
+        labels=labels,
+        effective_mask=mask,
+        window=4,
+        min_context=0,
+    )
+
+    mx.eval(loss)
+    assert loss.item() < 0.01
+
+
+def test_vision_language_loss_repetition_aux_can_be_disabled_and_masked() -> None:
+    _skip_if_mlx_unavailable()
+    import mlx.core as mx
+
+    class _Output:
+        def __init__(self, logits):
+            self.logits = logits
+
+    class _FakeModel:
+        def __init__(self, logits):
+            self.logits = logits
+
+        def __call__(self, input_ids, pixel_values, attention_mask, **kwargs):
+            return _Output(self.logits)
+
+    logits = mx.array(np.zeros((1, 5, 8), dtype=np.float32))
+    logits = logits.at[0, 2, 2].add(8.0)
+    batch = {
+        "input_ids": mx.array([[0, 1, 2, 3, 2, 4]], dtype=mx.int32),
+        "attention_mask": mx.ones((1, 6), dtype=mx.int32),
+        "pixel_values": mx.zeros((1, 1), dtype=mx.float32),
+        # Shifted mask trains no label positions here, so repeated-token
+        # probabilities in prompt-only positions must not affect the loss.
+        "weight_mask": mx.array([[0, 0, 0, 0, 0, 0]], dtype=mx.float32),
+    }
+    model = _FakeModel(logits)
+
+    disabled = _vision_language_loss_fn_with_marker_sequences(
+        model,
+        batch,
+        train_on_completions=True,
+        repetition_unlikelihood_enabled=False,
+        repetition_unlikelihood_weight=0.05,
+        repetition_unlikelihood_window=4,
+        repetition_unlikelihood_min_context=0,
+    )
+    enabled_masked = _vision_language_loss_fn_with_marker_sequences(
+        model,
+        batch,
+        train_on_completions=True,
+        repetition_unlikelihood_enabled=True,
+        repetition_unlikelihood_weight=0.05,
+        repetition_unlikelihood_window=4,
+        repetition_unlikelihood_min_context=0,
+    )
+    zero_weight = _vision_language_loss_fn_with_marker_sequences(
+        model,
+        batch,
+        train_on_completions=True,
+        repetition_unlikelihood_enabled=True,
+        repetition_unlikelihood_weight=0.0,
+        repetition_unlikelihood_window=4,
+        repetition_unlikelihood_min_context=0,
+    )
+
+    mx.eval(disabled, enabled_masked, zero_weight)
+    assert enabled_masked.item() == pytest.approx(disabled.item())
+    assert zero_weight.item() == pytest.approx(disabled.item())
+
+
 def test_build_assistant_marker_sequences_uses_tokenizer_encode_without_special_tokens() -> None:
     class _FakeTokenizer:
         def encode(self, text: str, add_special_tokens: bool = True):  # pragma: no cover - signature parity
@@ -840,6 +997,233 @@ def test_strict_coverage_tracker_initializes_and_updates_state(tmp_path: Path) -
     assert tracker.state_path.exists()
 
 
+def test_strict_coverage_tracker_syncs_to_checkpoint_step(tmp_path: Path) -> None:
+    config = load_config(CONFIG_PATH)
+    config.paths.runs_dir = tmp_path / "runs"
+
+    tracker = StrictCoverageTracker(
+        config=config,
+        run_id="unit-run",
+        run_dir=config.paths.runs_dir / "unit-run",
+        dataset_fingerprint={"dataset_path": "x", "line_count": 4, "sha256": "abc"},
+        config_fingerprint="cfg",
+        total_examples=4,
+        target_steps=8,
+        resume_requested=False,
+    )
+
+    tracker.sync_to_global_step(5)
+    assert tracker.state.global_step == 5
+    assert tracker.state.epoch == 1
+    assert tracker.state.batch_cursor_in_epoch == 1
+    assert tracker.remaining_steps == 3
+
+    tracker.sync_to_global_step(2)
+    assert tracker.state.global_step == 2
+    assert tracker.state.epoch == 0
+    assert tracker.state.batch_cursor_in_epoch == 2
+    assert tracker.remaining_steps == 6
+
+
+def test_read_checkpoint_iteration_uses_canonical_sidecar_metadata(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "0002560_adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+    checkpoint_metadata_path(checkpoint).write_text(
+        json.dumps({"global_step": 3072, "run_id": "curriculum_stage1"}),
+        encoding="utf-8",
+    )
+
+    info = _read_checkpoint_resume_info(checkpoint)
+    assert info is not None
+    assert info.global_step == 3072
+    assert info.run_id == "curriculum_stage1"
+    assert _read_checkpoint_iteration(checkpoint) == 3072
+
+
+def test_read_checkpoint_iteration_falls_back_to_numeric_checkpoint_name(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "0002560_adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+
+    info = _read_checkpoint_resume_info(checkpoint)
+    assert info is not None
+    assert info.global_step == 2560
+    assert info.run_id is None
+
+
+def test_materialized_numeric_resume_checkpoint_records_current_run_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(CONFIG_PATH)
+    config.paths.runs_dir = tmp_path / "runs"
+    checkpoint = tmp_path / "0002560_adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+
+    def _fake_materialize_lora_handoff_adapter(**kwargs):
+        target_dir = kwargs["target_dir"]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "adapters.safetensors").write_bytes(b"weights")
+        return {
+            "source_rank": kwargs["target_rank"],
+            "source_dropout": kwargs["target_dropout"],
+            "expanded": False,
+            "alpha_rescaled": False,
+        }
+
+    monkeypatch.setattr(
+        train_module,
+        "materialize_lora_handoff_adapter",
+        _fake_materialize_lora_handoff_adapter,
+    )
+
+    adapter_dir = train_module._prepare_resume_adapter_directory(
+        config,
+        checkpoint,
+        warnings=[],
+        run_id="curriculum_stage1",
+    )
+
+    payload = json.loads((adapter_dir / "checkpoint_metadata.json").read_text(encoding="utf-8"))
+    assert payload["global_step"] == 2560
+    assert payload["run_id"] == "curriculum_stage1"
+
+
+def test_strict_coverage_accepts_lora_capacity_upgrade_fingerprint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(CONFIG_PATH)
+    config.paths.runs_dir = tmp_path / "runs"
+    config.training.lora_rank = 24
+    config.training.lora_alpha = 48
+    config.training.lora_dropout = 0.08
+    config.training.lora_num_layers = 42
+
+    dataset_path = tmp_path / "train.jsonl"
+    checkpoint = tmp_path / "0002560_adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+    checkpoint_metadata_path(checkpoint).write_text(
+        json.dumps(
+            {
+                "global_step": 4,
+                "run_id": "unit-run",
+                "resolved_training_config": {
+                    "lora_rank": 16,
+                    "lora_alpha": 32,
+                    "lora_dropout": 0.08,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_materialize_lora_handoff_adapter(**kwargs):
+        target_dir = kwargs["target_dir"]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "adapters.safetensors").write_bytes(b"weights")
+        return {
+            "source_rank": 16,
+            "source_alpha": 32,
+            "source_dropout": 0.08,
+            "target_rank": kwargs["target_rank"],
+            "target_alpha": kwargs["target_alpha"],
+            "target_dropout": kwargs["target_dropout"],
+            "expanded": True,
+            "alpha_rescaled": False,
+        }
+
+    monkeypatch.setattr(
+        train_module,
+        "materialize_lora_handoff_adapter",
+        _fake_materialize_lora_handoff_adapter,
+    )
+    adapter_dir = train_module._prepare_resume_adapter_directory(
+        config,
+        checkpoint,
+        warnings=[],
+        run_id="unit-run",
+    )
+
+    args = argparse.Namespace(
+        batch_size=1,
+        gradient_accumulation_steps=8,
+        learning_rate=1e-6,
+        epochs=None,
+        steps_per_save=512,
+        train_on_completions=True,
+        lora_rank=24,
+        lora_alpha=48,
+        lora_dropout=0.08,
+        lora_num_layers=42,
+        adapter_path=str(adapter_dir),
+    )
+    plan = TrainingPlan(
+        dataset_path=dataset_path,
+        val_dataset_path=None,
+        output_path=tmp_path / "out.safetensors",
+        dry_run=False,
+        args=args,
+        warnings=[],
+    )
+    current_fingerprint = _compute_training_config_fingerprint(config, plan)
+    source_fingerprint = _compute_training_config_fingerprint(
+        config,
+        plan,
+        lora_rank=16,
+        lora_alpha=32,
+        lora_dropout=0.08,
+    )
+    accepted = _capacity_upgrade_resume_fingerprints(config, plan, current_fingerprint)
+    assert source_fingerprint in accepted
+
+    run_dir = config.paths.runs_dir / "unit-run"
+    StrictCoverageTracker(
+        config=config,
+        run_id="unit-run",
+        run_dir=run_dir,
+        dataset_fingerprint={"dataset_path": "x", "line_count": 4, "sha256": "abc"},
+        config_fingerprint=source_fingerprint,
+        total_examples=4,
+        target_steps=8,
+        resume_requested=False,
+    )
+
+    tracker = StrictCoverageTracker(
+        config=config,
+        run_id="unit-run",
+        run_dir=run_dir,
+        dataset_fingerprint={"dataset_path": "x", "line_count": 4, "sha256": "abc"},
+        config_fingerprint=current_fingerprint,
+        total_examples=4,
+        target_steps=8,
+        resume_requested=True,
+        accepted_config_fingerprints=accepted,
+    )
+    assert tracker.state.config_fingerprint == current_fingerprint
+
+
+def test_strict_coverage_tracker_recreates_missing_state_parent(tmp_path: Path) -> None:
+    config = load_config(CLEAN_CONFIG_PATH)
+    config.paths.runs_dir = tmp_path / "runs"
+    run_dir = config.paths.runs_dir / "unit-run"
+
+    tracker = StrictCoverageTracker(
+        config=config,
+        run_id="unit-run",
+        run_dir=run_dir,
+        dataset_fingerprint={"dataset_path": "x", "line_count": 2, "sha256": "abc"},
+        config_fingerprint="cfg",
+        total_examples=2,
+        target_steps=2,
+        resume_requested=False,
+    )
+
+    shutil.rmtree(run_dir)
+    tracker.save(force=True)
+
+    assert tracker.state_path.exists()
+
+
 def test_strict_coverage_tracker_rejects_fingerprint_mismatch_on_resume(tmp_path: Path) -> None:
     config = load_config(CONFIG_PATH)
     config.paths.runs_dir = tmp_path / "runs"
@@ -867,3 +1251,32 @@ def test_strict_coverage_tracker_rejects_fingerprint_mismatch_on_resume(tmp_path
             target_steps=2,
             resume_requested=True,
         )
+
+
+def test_strict_coverage_iterator_does_not_mark_unacknowledged_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Tracker:
+        marked: list[int] = []
+
+        def peek_next_example_index(self) -> int:
+            return 0
+
+        def mark_batch_complete(self, example_index: int) -> None:
+            self.marked.append(example_index)
+
+    monkeypatch.setattr(
+        train_module,
+        "_build_training_batch",
+        lambda items, max_seq_length: {"input_ids": [1, 2, 3]},
+    )
+    tracker = _Tracker()
+    iterator_factory = _build_strict_iterate_batches(
+        tracker=tracker,
+        original_iterate_batches=lambda *args, **kwargs: iter(()),
+    )
+
+    iterator = iterator_factory([{"input_ids": [1, 2, 3]}], batch_size=1, max_seq_length=16, train=True)
+    batch = next(iterator)
+    assert batch["__tikz_example_index__"] == 0
+
+    iterator.close()
+    assert tracker.marked == []

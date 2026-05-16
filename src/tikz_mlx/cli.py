@@ -162,7 +162,8 @@ def command_train(args: argparse.Namespace) -> int:
             run_id=args.run_id,
             dry_run=args.dry_run,
             iters=getattr(args, "iters", None),
-            save_interval=getattr(args, "save_interval", 100),
+            save_interval=getattr(args, "save_interval", None),
+            resume_offset=args.resume_offset,
         )
     _print_json(
         {
@@ -427,7 +428,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--resume-adapter")
     train_parser.add_argument("--run-id")
     train_parser.add_argument("--iters", type=int)
-    train_parser.add_argument("--save-interval", type=int, default=100)
+    train_parser.add_argument("--save-interval", type=int, default=None)
+    train_parser.add_argument("--resume-offset", type=int, default=0, help="Iteration offset for dataset resumption.")
     train_parser.add_argument("--dry-run", action="store_true")
     train_parser.add_argument("--smoke-run", action="store_true")
     train_parser.add_argument(

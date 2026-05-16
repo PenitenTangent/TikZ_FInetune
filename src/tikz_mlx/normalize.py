@@ -14,10 +14,34 @@ EXTERNAL_DEPENDENCY_PATTERNS = (
 )
 
 PACKAGE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\\begin\{tikz-cd\}|\\arrow\b"), r"\usepackage{tikz-cd}"),
-    (re.compile(r"\\begin\{circuitikz\}|to\[[^]]*resistor"), r"\usepackage{circuitikz}"),
+    (re.compile(r"\\begin\{tikz-cd\}|\\begin\{tikzcd\}|\\arrow\b"), r"\usepackage{tikz-cd}"),
+    (re.compile(r"\\begin\{circuitikz\}|to\[[^]]*(?:resistor|capacitor|inductor|diode|battery|ground|lamp|voltage|current|\b[RLCDVI]\b)"), r"\usepackage{circuitikz}"),
     (re.compile(r"\\begin\{axis\}|\\begin\{semilog[xy]axis\}|\\addplot\b|\\pgfplotsset\b|\\pgfplotstable"), r"\usepackage{pgfplots}"),
+    (re.compile(r"\\pgfplotstable"), r"\usepackage{pgfplotstable}"),
+    (re.compile(r"\\(?:mathbb|mathcal|mathfrak|operatorname|text|dfrac|tfrac|binom)\b|\\begin\{(?:align|aligned|gather|cases|pmatrix|bmatrix|matrix)\}"), r"\usepackage{amsmath}"),
+    (re.compile(r"\\(?:mathbb|mathfrak|varnothing|leqslant|geqslant|nleq|ngeq)\b"), r"\usepackage{amssymb}"),
+    (re.compile(r"\\(?:definecolor|colorlet)\b|(?:draw|fill|text|color)\s*=\s*\{?[A-Za-z]+![0-9]+"), r"\usepackage{xcolor}"),
 )
+
+TIKZ_LIBRARY_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\(\s*\$|\\path\s+let\b|\\pgfmathsetmacro\b|\\veclen\b|\bcoordinate\s+calculation\b"), "calc"),
+    (re.compile(r"\b(?:above|below|left|right|above left|above right|below left|below right)\s*=\s*(?:of|[0-9.]+[^,]*\s+of)\b|\bnode distance\s*="), "positioning"),
+    (re.compile(r"(?:->|<-|<->|-Stealth|-Latex|-Triangle|>=\s*(?:Latex|Stealth|Triangle)|\{(?:Latex|Stealth|Triangle))"), "arrows.meta"),
+    (re.compile(r"\b(?:diamond|trapezium|regular polygon|star|cloud|dart|kite|cylinder|ellipse split)\b"), "shapes.geometric"),
+    (re.compile(r"\bname intersections\b|\\path\s*\[.*\bname path\b"), "intersections"),
+    (re.compile(r"\bdecorate\b|decoration\s*=\s*\{?\s*(?:brace|calligraphic brace)"), "decorations.pathreplacing"),
+    (re.compile(r"\bmarkings\b|mark\s*=\s*at position|postaction\s*=\s*\{?\s*decorate"), "decorations.markings"),
+    (re.compile(r"\bon background layer\b|\\begin\{pgfonlayer\}|\\pgfdeclarelayer\b|\\pgfsetlayers\b"), "backgrounds"),
+    (re.compile(r"\bedge\s+node\s*\{|\bedge\s*\[.*\]\s*\""), "quotes"),
+    (re.compile(r"\bfit\s*="), "fit"),
+    (re.compile(r"\\matrix\b|\\begin\{matrix\}|\bmatrix of nodes\b"), "matrix"),
+    (re.compile(r"\bpattern\s*="), "patterns"),
+    (re.compile(r"\bthrough\s*="), "through"),
+    (re.compile(r"\.\.\s+controls\b|\\draw\s*\[.*\bhobby\b|\bclosed hobby\b"), "hobby"),
+)
+
+USEPACKAGE_RE = re.compile(r"\\usepackage(?:\[[^\]]+\])?\{([^}]+)\}")
+USETIKZLIBRARY_RE = re.compile(r"\\usetikzlibrary\{([^}]+)\}")
 
 
 def strip_inline_comments(text: str) -> str:
@@ -43,27 +67,48 @@ def contains_external_dependencies(text: str) -> bool:
     return any(re.search(pattern, text) for pattern in EXTERNAL_DEPENDENCY_PATTERNS)
 
 
+def _split_tex_list(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def detect_required_tikz_libraries(text: str) -> list[str]:
+    libraries: set[str] = set()
+    for match in USETIKZLIBRARY_RE.finditer(text):
+        libraries.update(_split_tex_list(match.group(1)))
+    for pattern, library in TIKZ_LIBRARY_RULES:
+        if pattern.search(text):
+            libraries.add(library)
+    return sorted(libraries)
+
+
 def detect_required_packages(text: str) -> list[str]:
     packages = {
         r"\usepackage[active,tightpage]{preview}",
         r"\usepackage{tikz}",
         r"\PreviewEnvironment{tikzpicture}",
-        r"\PreviewEnvironment{tikz-cd}",
-        r"\PreviewEnvironment{circuitikz}",
-        r"\PreviewEnvironment{axis}",
     }
-    # Add most common TikZ libraries to ensure compilation of modern syntax
-    packages.add(r"\usetikzlibrary{positioning, arrows.meta, calc, shapes.geometric, intersections, decorations.pathreplacing, decorations.markings, backgrounds, quotes, fit, matrix, patterns, through, hobby}")
 
+    for match in USEPACKAGE_RE.finditer(text):
+        for package_name in _split_tex_list(match.group(1)):
+            packages.add(rf"\usepackage{{{package_name}}}")
     for pattern, package in PACKAGE_RULES:
-        if re.search(pattern, text):
+        if pattern.search(text):
             packages.add(package)
 
+    libraries = detect_required_tikz_libraries(text)
+    if libraries:
+        packages.add(rf"\usetikzlibrary{{{', '.join(libraries)}}}")
+
+    if r"\usepackage{tikz-cd}" in packages:
+        packages.add(r"\PreviewEnvironment{tikz-cd}")
+    if r"\usepackage{circuitikz}" in packages:
+        packages.add(r"\PreviewEnvironment{circuitikz}")
     if r"\usepackage{pgfplots}" in packages:
+        packages.add(r"\PreviewEnvironment{axis}")
+        packages.add(r"\PreviewEnvironment{semilogxaxis}")
+        packages.add(r"\PreviewEnvironment{semilogyaxis}")
         packages.add(r"\pgfplotsset{compat=1.18}")
-    
-    # Special fix for pgfplots which often needs a compat level
-    # Ensure preview is loaded before its settings
+
     ordered = []
     if r"\usepackage[active,tightpage]{preview}" in packages:
         ordered.append(r"\usepackage[active,tightpage]{preview}")
@@ -240,8 +285,9 @@ def unwrap_document(text: str) -> str:
 
 
 def ensure_standalone_document(text: str) -> str:
+    source = strip_inline_comments(text)
     body = normalize_for_training_target(text)
-    packages = "\n".join(detect_required_packages(body))
+    packages = "\n".join(detect_required_packages(f"{source}\n{body}"))
     return f"{DOCUMENT_CLASS}\n{packages}\n{DOCUMENT_BEGIN}\n{body}\n{DOCUMENT_END}"
 
 
@@ -266,6 +312,7 @@ def normalize_for_training_target(text: str) -> str:
     body = strip_default_options(body)
     body = quantize_floats(body)
     body = derep_duplicate_commands(body)
+    body = cap_consecutive_duplicates(body)
     
     return body.strip()
 
@@ -375,6 +422,39 @@ def derep_duplicate_commands(text: str) -> str:
         result_lines.append(line)
     return "\n".join(result_lines)
 
+
+def cap_consecutive_duplicates(text: str, max_consecutive: int = 3) -> str:
+    """Collapse runs of identical consecutive lines down to `max_consecutive`.
+
+    This prevents the model from over-learning structural repetition patterns
+    like empty table rows (&&&&\\) or grid markers that can trigger collapse.
+    """
+    lines = text.splitlines()
+    if not lines:
+        return text
+
+    result = []
+    current_run_line = None
+    current_run_count = 0
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            result.append(line)
+            current_run_line = None
+            current_run_count = 0
+            continue
+
+        if stripped == current_run_line:
+            current_run_count += 1
+            if current_run_count <= max_consecutive:
+                result.append(line)
+        else:
+            current_run_line = stripped
+            current_run_count = 1
+            result.append(line)
+
+    return "\n".join(result)
 
 
 def normalize_tikz(text: str) -> str:

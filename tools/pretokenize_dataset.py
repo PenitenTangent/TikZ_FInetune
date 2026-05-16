@@ -6,6 +6,7 @@ import pathlib
 import sys
 import numpy as np
 from tqdm import tqdm
+from tikz_mlx.example_index import assign_example_index
 from tikz_mlx.prompting import prompt_template_sha256, PROMPT_CONTRACT_VERSION
 
 
@@ -32,11 +33,24 @@ def main():
                              "max_context_tokens are read from the config and override --model-id / --max-tokens.")
     parser.add_argument("--dataset", type=str, required=True, help="Path to JSONL dataset.")
     parser.add_argument("--output", type=str, required=True, help="Path to save tokenized data (.npy).")
+    parser.add_argument(
+        "--filtered-dataset-output",
+        type=str,
+        default=None,
+        help="Optional JSONL path to write only the records kept in the tokenized cache.",
+    )
     parser.add_argument("--max-tokens", type=int, default=None,
                         help="Max tokens for truncation. Defaults to model.max_context_tokens from --config, or 2048.")
     parser.add_argument("--prompt-contract-version", default="tikz_partial_decode_v1")
     parser.add_argument("--normalization-config-hash", default="")
     parser.add_argument("--disabled-rules", default="", help="Comma-separated disabled normalization/filter rules.")
+    parser.add_argument(
+        "--max-ngram-repetition-ratio",
+        type=float,
+        default=0.20,
+        help="Max fraction of completion tokens that may be covered by a single 4-gram. "
+             "Samples exceeding this are dropped as token-level repetition. Default: 0.20 (20%%).",
+    )
     
     args = parser.parse_args()
 
@@ -80,6 +94,7 @@ def main():
 
     print(f"Tokenizing {args.dataset}...")
     tokenized_samples = []
+    kept_record_lines: list[str] = []
     kept_sample_ids: list[str] = []
     skipped_sample_ids: list[str] = []
     token_lengths: list[int] = []
@@ -160,7 +175,31 @@ def main():
                 skipped_sample_ids.append(sample_id)
                 continue
 
+            # Token-level n-gram repetition filter.
+            # Find the assistant boundary (token 4368) to limit check to completion only.
+            ASSISTANT_TOKEN = 4368
+            try:
+                boundary = next(i for i, t in enumerate(token_ids) if t == ASSISTANT_TOKEN)
+                completion = token_ids[boundary + 1:]
+            except StopIteration:
+                completion = token_ids  # no boundary found — check entire sequence
+
+            if len(completion) >= 40 and args.max_ngram_repetition_ratio > 0:
+                ngram_counts: dict[tuple, int] = {}
+                for _i in range(len(completion) - 3):
+                    gram = tuple(completion[_i:_i + 4])
+                    ngram_counts[gram] = ngram_counts.get(gram, 0) + 1
+                if ngram_counts:
+                    max_count = max(ngram_counts.values())
+                    ratio = max_count * 4 / len(completion)
+                    if ratio > args.max_ngram_repetition_ratio:
+                        skipped_sample_ids.append(sample_id)
+                        continue
+
+            kept_index = len(tokenized_samples)
+            assign_example_index(record, kept_index)
             tokenized_samples.append(np.array(token_ids, dtype=np.int32))
+            kept_record_lines.append(json.dumps(record, ensure_ascii=False, sort_keys=True))
             kept_sample_ids.append(sample_id)
             token_lengths.append(len(token_ids))
 
@@ -174,6 +213,19 @@ def main():
     data = np.array(tokenized_samples, dtype=object)
     output_path = pathlib.Path(args.output)
     np.save(output_path, data)
+
+    audit_source_path = dataset_path
+    audit_source_row_count = total_lines
+    if args.filtered_dataset_output:
+        filtered_path = pathlib.Path(args.filtered_dataset_output)
+        tmp_path = filtered_path.with_suffix(filtered_path.suffix + ".tmp")
+        tmp_path.write_text(
+            "".join(line + "\n" for line in kept_record_lines),
+            encoding="utf-8",
+        )
+        tmp_path.replace(filtered_path)
+        audit_source_path = filtered_path
+        audit_source_row_count = len(kept_record_lines)
     n_kept = len(token_lengths)
     length_ge_fractions: dict[str, float] = {}
     if n_kept > 0:
@@ -182,9 +234,11 @@ def main():
             length_ge_fractions[str(thr)] = count_ge / n_kept
 
     audit = {
-        "source_jsonl_path": str(dataset_path.expanduser().resolve()),
-        "source_jsonl_sha256": _file_sha256(dataset_path),
-        "source_row_count": total_lines,
+        "original_source_jsonl_path": str(dataset_path.expanduser().resolve()),
+        "original_source_row_count": total_lines,
+        "source_jsonl_path": str(audit_source_path.expanduser().resolve()),
+        "source_jsonl_sha256": _file_sha256(audit_source_path),
+        "source_row_count": audit_source_row_count,
         "tokenized_row_count": len(tokenized_samples),
         "skipped_row_count": len(skipped_sample_ids),
         "kept_sample_ids_sha256": _ids_sha256(kept_sample_ids),

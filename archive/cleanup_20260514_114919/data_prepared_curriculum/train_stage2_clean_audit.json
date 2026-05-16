@@ -1,0 +1,2605 @@
+{
+  "input_mode_counts": {
+    "commutative_diagram": 137,
+    "graph_nodes": 312,
+    "pgfplots_axis": 8261,
+    "plain_tikz": 46181,
+    "scientific_schematic": 162
+  },
+  "output_mode_counts": {
+    "commutative_diagram": 100,
+    "graph_nodes": 251,
+    "pgfplots_axis": 4006,
+    "plain_tikz": 32287,
+    "scientific_schematic": 67
+  },
+  "quality_filter_config": {
+    "dominant_command_min_count": 20,
+    "dominant_command_ratio": 0.4,
+    "high_precision_line_ratio": 0.4,
+    "max_token_length": 1024,
+    "reject_metadata_truncated": true,
+    "repeated_line_run": 5,
+    "stealth_loop_count": 10
+  },
+  "quality_filter_config_hash": "9895adece6376b3cae880932539b46df0bc1d5c5f8bba90648b0c93915227a86",
+  "reason_counts": {
+    "contract:assistant_usepackage": 1,
+    "contract:assistant_usetikzlibrary": 1,
+    "high_precision_numeric_poisoning": 756,
+    "metadata_truncated": 5011,
+    "repeated_line_loop": 89,
+    "stealth_loop": 15,
+    "token_length_exceeds_max": 17908,
+    "unbalanced_braces": 273,
+    "unbalanced_brackets": 72,
+    "unbalanced_parentheses": 237
+  },
+  "rejection_examples": [
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 36,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 7,
+          "dominant_command_ratio": 0.19444444444444445,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[font=\\sffamily\\small];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1042
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 2,
+      "sample_id": "07f9aa933af88a3b"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 22,
+          "dominant_command": "\\i",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.36363636363636365,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_brackets"
+        ],
+        "token_length": 729
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_brackets"
+      ],
+      "row_index": 15,
+      "sample_id": "3b4f3dda0e9581b3"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 17,
+          "dominant_command": "\\tzcoors",
+          "dominant_command_count": 4,
+          "dominant_command_ratio": 0.23529411764705882,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[font=\\scriptsize]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1198
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 19,
+      "sample_id": "3d13563422a473dd"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 52,
+          "dominant_command": "\\boldsymbol",
+          "dominant_command_count": 17,
+          "dominant_command_ratio": 0.3269230769230769,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[bezier bounding box];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1545
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 27,
+      "sample_id": "0fd574d372247178"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 24,
+          "dominant_command": "\\node",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.6666666666666666,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1046
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 28,
+      "sample_id": "0bcafdb41768e2c8"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 25,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 11,
+          "dominant_command_ratio": 0.44,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1193
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 61,
+      "sample_id": "020e511b3fc8deca"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 22,
+          "dominant_command": "\\tzline",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.2727272727272727,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[ultra thick,>=to]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1253
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 62,
+      "sample_id": "67048328aa304d4f"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 17,
+          "dominant_command": "\\tzline",
+          "dominant_command_count": 5,
+          "dominant_command_ratio": 0.29411764705882354,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1042
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 64,
+      "sample_id": "05c21a1fb4f0a9fa"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 86,
+          "dominant_command": "\\TIplusone",
+          "dominant_command_count": 18,
+          "dominant_command_ratio": 0.20930232558139536,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[domain=\\domainStart:\\domainEnd];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1240
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 65,
+      "sample_id": "0de3c242c0502f90"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 9,
+          "dominant_command": "\\i",
+          "dominant_command_count": 3,
+          "dominant_command_ratio": 0.3333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_brackets"
+        ],
+        "token_length": 664
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_brackets"
+      ],
+      "row_index": 70,
+      "sample_id": "317e62e7652d4d18"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 55,
+          "dominant_command": "\\num",
+          "dominant_command_count": 12,
+          "dominant_command_ratio": 0.21818181818181817,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[font=\\bfseries\\sffamily]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1141
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 82,
+      "sample_id": "5076fd329b79f0c7"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 59,
+          "dominant_command": "\\getComponentOf",
+          "dominant_command_count": 18,
+          "dominant_command_ratio": 0.3050847457627119,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1513
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 85,
+      "sample_id": "1ff9568b2b56e20e"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.1518987341772152,
+        "high_precision_numeric_lines": 12,
+        "repetition": {
+          "command_count": 83,
+          "dominant_command": "\\x",
+          "dominant_command_count": 73,
+          "dominant_command_ratio": 0.8795180722891566,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 2074
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 115,
+      "sample_id": "2df90191fb57db4a"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.1518987341772152,
+        "high_precision_numeric_lines": 12,
+        "repetition": {
+          "command_count": 83,
+          "dominant_command": "\\x",
+          "dominant_command_count": 73,
+          "dominant_command_ratio": 0.8795180722891566,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 2068
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 116,
+      "sample_id": "9585893817ae09b6"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 27,
+          "dominant_command": "\\node",
+          "dominant_command_count": 17,
+          "dominant_command_ratio": 0.6296296296296297,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1464
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 129,
+      "sample_id": "d02f8680ab3d0365"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 84,
+          "dominant_command": "\\a",
+          "dominant_command_count": 28,
+          "dominant_command_ratio": 0.3333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 2,
+          "repeated_line": "\\end{scope}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1273
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 132,
+      "sample_id": "58e8ef25a34ecfaf"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 6,
+          "dominant_command": "\\begin",
+          "dominant_command_count": 1,
+          "dominant_command_ratio": 0.16666666666666666,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_brackets"
+        ],
+        "token_length": 460
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_brackets"
+      ],
+      "row_index": 136,
+      "sample_id": "76fd6628bc8b0f73"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 17,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.35294117647058826,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1162
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 146,
+      "sample_id": "ab14397f9bb84164"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 17,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.35294117647058826,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1188
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 147,
+      "sample_id": "25d503a121c59894"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 27,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.2962962962962963,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale=1];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1055
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 149,
+      "sample_id": "dc21b408758f504b"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 51,
+          "dominant_command": "\\Col",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.1568627450980392,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 2,
+          "repeated_line": "\\end{scope}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1143
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 156,
+      "sample_id": "ff96d9ba85cc95e4"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 26,
+          "dominant_command": "\\node",
+          "dominant_command_count": 13,
+          "dominant_command_ratio": 0.5,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1196
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 168,
+      "sample_id": "4d0651ca835fcf2d"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 71,
+          "dominant_command": "\\vertex",
+          "dominant_command_count": 18,
+          "dominant_command_ratio": 0.2535211267605634,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[> = {Straight Barb[scale=1.2]}];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 2034
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 170,
+      "sample_id": "0292d72e58500466"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 34,
+          "dominant_command": "\\node",
+          "dominant_command_count": 22,
+          "dominant_command_ratio": 0.6470588235294118,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1640
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 174,
+      "sample_id": "68c70f33296ee133"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 18,
+          "dominant_command": "\\edge",
+          "dominant_command_count": 7,
+          "dominant_command_ratio": 0.3888888888888889,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 2,
+          "repeated_line": "]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1033
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 177,
+      "sample_id": "679ecb05606e2729"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 26,
+          "dominant_command": "\\pgfmathsetmacro",
+          "dominant_command_count": 4,
+          "dominant_command_ratio": 0.15384615384615385,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 579
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 183,
+      "sample_id": "b5a7afd308b9ad8b"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 39,
+          "dominant_command": "\\tkzLabelSegment",
+          "dominant_command_count": 10,
+          "dominant_command_ratio": 0.2564102564102564,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1113
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 187,
+      "sample_id": "36c7f33153b40565"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 30,
+          "dominant_command": "\\path",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.26666666666666666,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale = 0.35, every node/.style = {scale = 0.6}];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 1040
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "unbalanced_braces"
+      ],
+      "row_index": 189,
+      "sample_id": "6ec7a8fff4438e56"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 38,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 34,
+          "dominant_command_ratio": 0.8947368421052632,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1545
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 194,
+      "sample_id": "1516adbe5571a9de"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 22,
+          "dominant_command": "\\x",
+          "dominant_command_count": 4,
+          "dominant_command_ratio": 0.18181818181818182,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[tdplot_main_coords];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1025
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 199,
+      "sample_id": "7a50d425c093f6a8"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 120,
+          "dominant_command": "\\a",
+          "dominant_command_count": 88,
+          "dominant_command_ratio": 0.7333333333333333,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[xscale=1, yscale=0.50, font=\\Large]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 2107
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 200,
+      "sample_id": "15c70bf3b87ff518"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 15,
+          "dominant_command": "\\node",
+          "dominant_command_count": 3,
+          "dominant_command_ratio": 0.2,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 529
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 207,
+      "sample_id": "bea82f31d793f864"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 37,
+          "dominant_command": "\\node",
+          "dominant_command_count": 11,
+          "dominant_command_ratio": 0.2972972972972973,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[node distance = .9\\baselineskip and 0pt,",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1574
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 208,
+      "sample_id": "84df1e5ff1263d35"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 47,
+          "dominant_command": "\\node",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.3404255319148936,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{circuitikz}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1190
+      },
+      "mode": "scientific_schematic",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 217,
+      "sample_id": "6888c3616c396420"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 40,
+          "dominant_command": "\\x",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.4,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces",
+          "unbalanced_parentheses"
+        ],
+        "token_length": 903
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces",
+        "unbalanced_parentheses"
+      ],
+      "row_index": 219,
+      "sample_id": "e5c98f6b4d16e2e3"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 4,
+          "dominant_command": "\\begin",
+          "dominant_command_count": 1,
+          "dominant_command_ratio": 0.25,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_parentheses"
+        ],
+        "token_length": 489
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_parentheses"
+      ],
+      "row_index": 221,
+      "sample_id": "f54b14855306d645"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 95,
+          "dominant_command": "\\R",
+          "dominant_command_count": 37,
+          "dominant_command_ratio": 0.3894736842105263,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1612
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 222,
+      "sample_id": "61b040afd707bede"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 28,
+          "dominant_command": "\\node",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.21428571428571427,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1162
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 231,
+      "sample_id": "6150c03ae84e6fd3"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 32,
+          "dominant_command": "\\pgfpointanchor",
+          "dominant_command_count": 4,
+          "dominant_command_ratio": 0.125,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[remember picture,overlay,#1];",
+          "stealth_loop_count": 1
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 1019
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 235,
+      "sample_id": "560caef6f5f23e65"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 5,
+          "dominant_command": "\\begin",
+          "dominant_command_count": 1,
+          "dominant_command_ratio": 0.2,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1064
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 236,
+      "sample_id": "6520eea551672c3c"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 37,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.21621621621621623,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[very thick, black];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1371
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 237,
+      "sample_id": "f00794d8332d567b"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 20,
+          "dominant_command": "\\n",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.3,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 688
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 239,
+      "sample_id": "c1101756c181440a"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 71,
+          "dominant_command": "\\firstday",
+          "dominant_command_count": 7,
+          "dominant_command_ratio": 0.09859154929577464,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1200
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 249,
+      "sample_id": "65c9957c1a5e2b39"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 82,
+          "dominant_command": "\\foreach",
+          "dominant_command_count": 10,
+          "dominant_command_ratio": 0.12195121951219512,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 4,
+          "repeated_line": "}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1320
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 250,
+      "sample_id": "8aca06f8d21ae3fb"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 22,
+          "dominant_command": "\\pi",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.36363636363636365,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1077
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 253,
+      "sample_id": "87031ac17fdabcce"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 9,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 4,
+          "dominant_command_ratio": 0.4444444444444444,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[every node/.style={scale=.8}];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1110
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 263,
+      "sample_id": "88b06e66e4301f8c"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 80,
+          "dominant_command": "\\omega",
+          "dominant_command_count": 37,
+          "dominant_command_ratio": 0.4625,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[>=stealth];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1253
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 289,
+      "sample_id": "665d6e9ceca0f010"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.16666666666666666,
+        "high_precision_numeric_lines": 1,
+        "repetition": {
+          "command_count": 4,
+          "dominant_command": "\\end",
+          "dominant_command_count": 2,
+          "dominant_command_ratio": 0.5,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 500
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 290,
+      "sample_id": "1f795fee90f67aef"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 66,
+          "dominant_command": "\\pgfpointxy",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.12121212121212122,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1065
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 294,
+      "sample_id": "71256631f3caa35d"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.044444444444444446,
+        "high_precision_numeric_lines": 2,
+        "repetition": {
+          "command_count": 27,
+          "dominant_command": "\\begin",
+          "dominant_command_count": 2,
+          "dominant_command_ratio": 0.07407407407407407,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1117
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 298,
+      "sample_id": "88fd0581107365cc"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0425531914893617,
+        "high_precision_numeric_lines": 2,
+        "repetition": {
+          "command_count": 33,
+          "dominant_command": "\\thisrow",
+          "dominant_command_count": 3,
+          "dominant_command_ratio": 0.09090909090909091,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1139
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 299,
+      "sample_id": "85868da4e7d1ce2a"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.03773584905660377,
+        "high_precision_numeric_lines": 2,
+        "repetition": {
+          "command_count": 36,
+          "dominant_command": "\\thisrow",
+          "dominant_command_count": 3,
+          "dominant_command_ratio": 0.08333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1253
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 300,
+      "sample_id": "2350a25d9fb492d0"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 51,
+          "dominant_command": "\\vertex",
+          "dominant_command_count": 18,
+          "dominant_command_ratio": 0.35294117647058826,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale=0.75,every node/.style={transform shape}];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1382
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 301,
+      "sample_id": "aefa5510582cf9c0"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 64,
+          "dominant_command": "\\node",
+          "dominant_command_count": 11,
+          "dominant_command_ratio": 0.171875,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1499
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 307,
+      "sample_id": "02ea379b8ed9f5af"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 135,
+          "dominant_command": "\\vec",
+          "dominant_command_count": 18,
+          "dominant_command_ratio": 0.13333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 2084
+      },
+      "mode": "graph_nodes",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 308,
+      "sample_id": "291b95f59530b1f4"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 139,
+          "dominant_command": "\\a",
+          "dominant_command_count": 30,
+          "dominant_command_ratio": 0.2158273381294964,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 2,
+          "repeated_line": "\\end{scope}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_parentheses"
+        ],
+        "token_length": 1922
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated",
+        "unbalanced_parentheses"
+      ],
+      "row_index": 312,
+      "sample_id": "573365967bfd0a0a"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 176,
+          "dominant_command": "\\a",
+          "dominant_command_count": 55,
+          "dominant_command_ratio": 0.3125,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1581
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 314,
+      "sample_id": "0dc8bc1c08101fda"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 42,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 14,
+          "dominant_command_ratio": 0.3333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[outer sep=0mm];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1114
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 322,
+      "sample_id": "2614b117cdb71cd4"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 29,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 10,
+          "dominant_command_ratio": 0.3448275862068966,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1137
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 324,
+      "sample_id": "d3509d24c7f84483"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 19,
+          "dominant_command": "\\mu",
+          "dominant_command_count": 5,
+          "dominant_command_ratio": 0.2631578947368421,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1974
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 327,
+      "sample_id": "bec33954de249ccb"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 33,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 13,
+          "dominant_command_ratio": 0.3939393939393939,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1551
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 337,
+      "sample_id": "0c2ac6442d9c01ad"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 38,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 15,
+          "dominant_command_ratio": 0.39473684210526316,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1299
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 342,
+      "sample_id": "88605ef2476aca2f"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 35,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 15,
+          "dominant_command_ratio": 0.42857142857142855,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1414
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 343,
+      "sample_id": "3eb9bbf003dad7c4"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 23,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 7,
+          "dominant_command_ratio": 0.30434782608695654,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_brackets"
+        ],
+        "token_length": 920
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_brackets"
+      ],
+      "row_index": 345,
+      "sample_id": "8d1a61798da80541"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 15,
+          "dominant_command": "\\node",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.5333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1073
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 353,
+      "sample_id": "eed6911ffee8fc04"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 26,
+          "dominant_command": "\\node",
+          "dominant_command_count": 18,
+          "dominant_command_ratio": 0.6923076923076923,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[node distance=20mm,every node/.style={rectangle,minimum height=10mm,text width=17mm,align=center,rounded corners=1mm,fill=green!50!black,draw=black}];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1183
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 358,
+      "sample_id": "d78b4a2adc9fb225"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 47,
+          "dominant_command": "\\node",
+          "dominant_command_count": 17,
+          "dominant_command_ratio": 0.3617021276595745,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1189
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 359,
+      "sample_id": "6b5f7f40c789070f"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.5454545454545454,
+        "high_precision_numeric_lines": 12,
+        "repetition": {
+          "command_count": 13,
+          "dominant_command": "\\begin",
+          "dominant_command_count": 5,
+          "dominant_command_ratio": 0.38461538461538464,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 2,
+          "repeated_line": "\\end{scope}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1266
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "high_precision_numeric_poisoning"
+      ],
+      "row_index": 360,
+      "sample_id": "f9408dfaa42fef61"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 24,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 9,
+          "dominant_command_ratio": 0.375,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale=1,transform shape];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1063
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 375,
+      "sample_id": "a6b651347621b692"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 37,
+          "dominant_command": "\\nodepart",
+          "dominant_command_count": 15,
+          "dominant_command_ratio": 0.40540540540540543,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[every label/.style={align=center, font=\\scriptsize\\ttfamily}]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1034
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 384,
+      "sample_id": "e3d5fb56b95d731f"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 69,
+          "dominant_command": "\\Asector",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.2318840579710145,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[font=\\large, main/.style = {draw, circle, text=black,",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1211
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 392,
+      "sample_id": "c91da57b422732b9"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 83,
+          "dominant_command": "\\Asector",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.1927710843373494,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[font=\\large, main/.style = {draw, circle, text=black,",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1443
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 393,
+      "sample_id": "1f23e1deee47edf9"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 12,
+          "dominant_command": "\\matrix",
+          "dominant_command_count": 3,
+          "dominant_command_ratio": 0.25,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[remember picture]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1112
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 395,
+      "sample_id": "7889ebeecff39030"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 39,
+          "dominant_command": "\\x",
+          "dominant_command_count": 10,
+          "dominant_command_ratio": 0.2564102564102564,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1068
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 398,
+      "sample_id": "61916fd0c44783c2"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 8,
+          "dominant_command": "\\end",
+          "dominant_command_count": 3,
+          "dominant_command_ratio": 0.375,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 688
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 401,
+      "sample_id": "540c8ff1bc663be0"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 32,
+          "dominant_command": "\\textcolor",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.25,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[mycircle/.style={circle,draw=black, text opacity=1, inner sep=5pt}, myarrow/.style={-Stealth},node distance=0.6cm and 1.2cm];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1354
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 408,
+      "sample_id": "efd700b5b5470980"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 66,
+          "dominant_command": "\\textcolor",
+          "dominant_command_count": 9,
+          "dominant_command_ratio": 0.13636363636363635,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[mycircle/.style={circle,draw=black, text opacity=1, inner sep=5pt},",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1493
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 409,
+      "sample_id": "7239d221fddacaa7"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 28,
+          "dominant_command": "\\node",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.2857142857142857,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1271
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 410,
+      "sample_id": "5ef6b63195de1936"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 32,
+          "dominant_command": "\\loc",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.25,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[xscale=-1,transform shape];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 779
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "unbalanced_braces"
+      ],
+      "row_index": 411,
+      "sample_id": "d7d77597bc27e0df"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 39,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 9,
+          "dominant_command_ratio": 0.23076923076923078,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1318
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 424,
+      "sample_id": "23438f5fd77717c7"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 58,
+          "dominant_command": "\\sankeyadvance",
+          "dominant_command_count": 17,
+          "dominant_command_ratio": 0.29310344827586204,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1652
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 427,
+      "sample_id": "cf9986076b2e5067"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 67,
+          "dominant_command": "\\sankeyadvance",
+          "dominant_command_count": 20,
+          "dominant_command_ratio": 0.29850746268656714,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1752
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 428,
+      "sample_id": "bd7d91be02131495"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.075,
+        "high_precision_numeric_lines": 3,
+        "repetition": {
+          "command_count": 45,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 9,
+          "dominant_command_ratio": 0.2,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1317
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 431,
+      "sample_id": "da55a38ab28d7649"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.4827586206896552,
+        "high_precision_numeric_lines": 14,
+        "repetition": {
+          "command_count": 20,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 11,
+          "dominant_command_ratio": 0.55,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[line cap=round,line join=round,>=triangle 45,x=1.0cm,y=1.0cm, scale = 1.2, transform shape];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1573
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated",
+        "high_precision_numeric_poisoning"
+      ],
+      "row_index": 435,
+      "sample_id": "d974c2b67a5f9f00"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 41,
+          "dominant_command": "\\node",
+          "dominant_command_count": 21,
+          "dominant_command_ratio": 0.5121951219512195,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[node distance = 0.3cm,auto][t];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 2033
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 436,
+      "sample_id": "17c5260f5ef07376"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 41,
+          "dominant_command": "\\node",
+          "dominant_command_count": 21,
+          "dominant_command_ratio": 0.5121951219512195,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[node distance = 0.3cm,auto,",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1758
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 437,
+      "sample_id": "4633e0d37bed1df4"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 41,
+          "dominant_command": "\\node",
+          "dominant_command_count": 21,
+          "dominant_command_ratio": 0.5121951219512195,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[node distance = 0.3cm,",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1837
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 438,
+      "sample_id": "9c0fecb1f80678c1"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 26,
+          "dominant_command": "\\addplot",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.6153846153846154,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1524
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 465,
+      "sample_id": "53e5e4ecd3803aec"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 26,
+          "dominant_command": "\\addplot",
+          "dominant_command_count": 16,
+          "dominant_command_ratio": 0.6153846153846154,
+          "has_dominant_command_loop": true,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1540
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 466,
+      "sample_id": "7bd96cb85d3382f1"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 79,
+          "dominant_command": "\\l",
+          "dominant_command_count": 21,
+          "dominant_command_ratio": 0.26582278481012656,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[tdplot_main_coords]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1899
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 470,
+      "sample_id": "c809fc5337adf53e"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 51,
+          "dominant_command": "\\L",
+          "dominant_command_count": 17,
+          "dominant_command_ratio": 0.3333333333333333,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1375
+      },
+      "mode": "pgfplots_axis",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 471,
+      "sample_id": "a9044fbc4432bc64"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 38,
+          "dominant_command": "\\nodE",
+          "dominant_command_count": 8,
+          "dominant_command_ratio": 0.21052631578947367,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1036
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 484,
+      "sample_id": "91f0eadee719a029"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 63,
+          "dominant_command": "\\t",
+          "dominant_command_count": 24,
+          "dominant_command_ratio": 0.38095238095238093,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[>=latex,font=\\sffamily]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1455
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 489,
+      "sample_id": "1d6655ae6090f1ba"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 61,
+          "dominant_command": "\\t",
+          "dominant_command_count": 24,
+          "dominant_command_ratio": 0.39344262295081966,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[>=latex,font=\\sffamily]",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1569
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "metadata_truncated"
+      ],
+      "row_index": 490,
+      "sample_id": "4d20eec87367e279"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 33,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.18181818181818182,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale=0.045];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1073
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 491,
+      "sample_id": "c185cea410f364bc"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 33,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.18181818181818182,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale=0.045];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1058
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 492,
+      "sample_id": "8e83ec8e82662211"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 31,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.1935483870967742,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[scale=0.045];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1057
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 493,
+      "sample_id": "a4f2c1705f6546c2"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 56,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 7,
+          "dominant_command_ratio": 0.125,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[very thick, every node/.style={scale=10}, scale=13];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1249
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 497,
+      "sample_id": "8e7f4f38037519a8"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 33,
+          "dominant_command": "\\draw",
+          "dominant_command_count": 6,
+          "dominant_command_ratio": 0.18181818181818182,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}[very thick, every node/.style={scale=10}, scale=13];",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [],
+        "token_length": 1031
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max"
+      ],
+      "row_index": 499,
+      "sample_id": "59ac2aae7472badf"
+    },
+    {
+      "features": {
+        "high_precision_numeric_line_ratio": 0.0,
+        "high_precision_numeric_lines": 0,
+        "repetition": {
+          "command_count": 51,
+          "dominant_command": "\\gantttitle",
+          "dominant_command_count": 15,
+          "dominant_command_ratio": 0.29411764705882354,
+          "has_dominant_command_loop": false,
+          "has_repetition_loop": false,
+          "max_repeated_line_run": 1,
+          "repeated_line": "\\begin{tikzpicture}",
+          "stealth_loop_count": 0
+        },
+        "structure_violations": [
+          "unbalanced_braces"
+        ],
+        "token_length": 1383
+      },
+      "mode": "plain_tikz",
+      "reasons": [
+        "token_length_exceeds_max",
+        "unbalanced_braces"
+      ],
+      "row_index": 500,
+      "sample_id": "854803d48f29bc53"
+    }
+  ],
+  "total_input": 55053,
+  "total_output": 36711,
+  "total_rejected": 18342
+}

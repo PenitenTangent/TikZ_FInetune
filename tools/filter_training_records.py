@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 from tikz_mlx.bad_patterns import check_bad_patterns
+from tikz_mlx.example_index import assign_example_index
 from tikz_mlx.token_stats import boilerplate_score
 from tikz_mlx.recovery import substantive_features
 
@@ -73,10 +74,11 @@ def main():
                     rejected_count += 1
                     if f_rej:
                         record["_reject_reasons"] = reject_reasons
-                        f_rej.write(json.dumps(record) + "\n")
+                        f_rej.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
                 else:
+                    assign_example_index(record, accepted_count)
                     accepted_count += 1
-                    f_out.write(json.dumps(record) + "\n")
+                    f_out.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         finally:
             if f_rej:
                 f_rej.close()

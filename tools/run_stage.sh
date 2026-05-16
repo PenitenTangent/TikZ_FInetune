@@ -15,14 +15,15 @@ else
 fi
 export PYTHON_EXE
 export PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+source "$PROJECT_ROOT/tools/resume_offset.sh"
 
 # Check arguments
 if [ $# -lt 1 ]; then
   echo "Usage: run_stage.sh <stage_num> [--resume|--no-resume] [--config <path>] [--resume-from <adapter>]"
   echo ""
   echo "Examples:"
-  echo "  ./tools/run_stage.sh 1              # Run stage 1 from scratch"
-  echo "  ./tools/run_stage.sh 2 --resume     # Resume stage 2 from checkpoint"
+  echo "  ./tools/run_stage.sh 0              # Run synthetic primitive warmup from scratch"
+  echo "  ./tools/run_stage.sh 1              # Run stage 1, resuming from stage 0 if published"
   echo "  ./tools/run_stage.sh 3              # Run stage 3 (resumes if checkpoint exists)"
   exit 1
 fi
@@ -74,14 +75,14 @@ while [ $# -gt 0 ]; do
 done
 
 # Validate stage number
-if ! [[ "$STAGE_NUM" =~ ^[1-5]$ ]]; then
-  echo "ERROR: Stage number must be 1-5"
+if ! [[ "$STAGE_NUM" =~ ^[0-5]$ ]]; then
+  echo "ERROR: Stage number must be 0-5"
   exit 1
 fi
 
 # Stage configurations
 STAGES=(
-  ""  # index 0 unused
+  "configs/curriculum_stage0.yaml"
   "configs/curriculum_stage1.yaml"
   "configs/curriculum_stage2.yaml"
   "configs/curriculum_stage3.yaml"
@@ -91,7 +92,7 @@ STAGES=(
 
 # Checkpoint directories
 CHECKPOINT_DIRS=(
-  ""  # index 0 unused
+  "runs/curriculum_stage0"
   "runs/curriculum_stage1"
   "runs/curriculum_stage2"
   "runs/curriculum_stage3"
@@ -101,7 +102,7 @@ CHECKPOINT_DIRS=(
 
 # Adapter outputs
 ADAPTER_OUTPUTS=(
-  ""  # index 0 unused
+  "runs/tikz_stage0_adapter.safetensors"
   "runs/tikz_stage1_adapter.safetensors"
   "runs/tikz_stage2_adapter.safetensors"
   "runs/tikz_stage3_adapter.safetensors"
@@ -124,16 +125,13 @@ adapter_output="${CHECKPOINT_DIRS[$STAGE_NUM]}/final_adapter.safetensors"
 published_adapter="${ADAPTER_OUTPUTS[$STAGE_NUM]}"
 prev_adapter=""
 run_id="curriculum_stage${STAGE_NUM}"
-stage_iters=$(
-  "$PYTHON_EXE" -c "import sys,yaml; c=yaml.safe_load(open(sys.argv[1], encoding='utf-8')); print(int(c['training']['iters']))" \
-    "$config_file"
-)
 stage_log="$checkpoint_dir/train_stage${STAGE_NUM}.log"
 
-if [ $STAGE_NUM -gt 1 ]; then
+if [ $STAGE_NUM -gt 0 ]; then
   prev_adapter="${ADAPTER_OUTPUTS[$((STAGE_NUM - 1))]}"
 fi
 
+# Initial banner (stage_iters calculated later)
 echo "========================================="
 echo "Stage $STAGE_NUM Training"
 echo "========================================="
@@ -141,17 +139,16 @@ echo "Config: $config_file"
 echo "Checkpoints: $checkpoint_dir"
 echo "Output adapter: $adapter_output"
 echo "Published adapter: $published_adapter"
-echo "Target iterations: $stage_iters"
 echo "Log file: $stage_log"
 echo ""
 
 # Create checkpoint directory
 mkdir -p "$checkpoint_dir"
 
-# Ensure the resume shim exists at the expected root path. The trainer looks for
-# runs/adapter_config.json when resuming from a safetensors adapter, so we write
-# a fresh copy from the current stage's LoRA settings before training starts.
-"$PYTHON_EXE" - <<'PY' "$config_file" "$PROJECT_ROOT/runs/adapter_config.json"
+# Ensures adapter_config.json exists in both locations used by the resume path:
+# train.py wraps raw .safetensors files from runs/adapter_config.json, while
+# mlx-vlm can also load checkpoints directly from their parent directory.
+"$PYTHON_EXE" - <<'PY' "$config_file" "$PROJECT_ROOT/runs/adapter_config.json" "$checkpoint_dir/adapter_config.json"
 import json
 import pathlib
 import sys
@@ -159,7 +156,7 @@ import sys
 import yaml
 
 config_path = pathlib.Path(sys.argv[1])
-output_path = pathlib.Path(sys.argv[2])
+output_paths = [pathlib.Path(arg) for arg in sys.argv[2:]]
 with config_path.open("r", encoding="utf-8") as handle:
   config = yaml.safe_load(handle)
 training = config.get("training", {})
@@ -168,7 +165,9 @@ payload = {
   "alpha": int(training.get("lora_alpha", 48)),
   "dropout": float(training.get("lora_dropout", 0.0)),
 }
-output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+for output_path in output_paths:
+  output_path.parent.mkdir(parents=True, exist_ok=True)
+  output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
 # Check for existing checkpoint
@@ -186,6 +185,7 @@ STAGE_TRAIN_JSONL=""
 # Typically data/prepared/curriculum/train_stageN.jsonl (raw)
 for candidate in \
     "data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl" \
+    "data/prepared/curriculum/synthetic_primitives.jsonl" \
     "data/prepared/train_stage${STAGE_NUM}.jsonl" \
     "data/prepared/train.jsonl"; do
   if [ -f "$candidate" ]; then
@@ -237,6 +237,11 @@ if [ -z "$PRETOK_OUT" ]; then
   SKIP_PRETOKENIZE_FLAG="--skip-pretokenize"
 fi
 
+REPAIR_CONTRACT_FLAG=""
+if [ "$STAGE_NUM" -gt 1 ]; then
+  REPAIR_CONTRACT_FLAG="--repair-contract"
+fi
+
 if [ "$SKIP_DATA_GATES" = "1" ]; then
   if [ "${ALLOW_SKIP_DATA_GATES:-0}" != "1" ]; then
     echo "ERROR: --skip-data-gates requires ALLOW_SKIP_DATA_GATES=1 environment variable."
@@ -255,12 +260,64 @@ else
     --input "$STAGE_TRAIN_JSONL" \
     --clean-output "$CLEAN_JSONL" \
     --pretok-output "$PRETOK_OUT" \
+    $REPAIR_CONTRACT_FLAG \
     $SKIP_PRETOKENIZE_FLAG \
     $VAL_FLAG $GOLD_FLAG || {
       echo "ERROR: Data gates failed for Stage $STAGE_NUM. Aborting training."
       exit 1
     }
 fi
+
+# ── Iteration Count Calculation ─────────────────────────────────────────────
+# We dynamically calculate the number of iterations based on the actual number
+# of records in the cleaned dataset after the gates. This ensures a full pass.
+coverage_enabled=$(
+  "$PYTHON_EXE" -c "import sys,yaml; c=yaml.safe_load(open(sys.argv[1], encoding='utf-8')); print('1' if c.get('training', {}).get('coverage', {}).get('enabled', False) else '0')" \
+    "$config_file"
+)
+if [ "$coverage_enabled" = "1" ]; then
+  echo "Strict coverage: enabled (resume position comes from coverage_state, not checkpoint filename)"
+else
+  echo "Strict coverage: disabled"
+fi
+
+if [ -f "$CLEAN_JSONL" ]; then
+    CLEAN_ROWS=$(wc -l < "$CLEAN_JSONL" | tr -d ' ')
+    GRAD_ACCUM=$( "$PYTHON_EXE" -c "import sys,yaml; c=yaml.safe_load(open(sys.argv[1], encoding='utf-8')); print(int(c.get('memory', {}).get('gradient_accumulation_steps', 4)))" "$config_file" )
+
+    if [ "$coverage_enabled" = "1" ]; then
+        if [ $((CLEAN_ROWS % GRAD_ACCUM)) -ne 0 ]; then
+            echo "ERROR: strict no-repeat coverage refuses to round $CLEAN_ROWS rows up to grad_accum=$GRAD_ACCUM."
+            echo "       Regenerate stage partitions or choose a gradient_accumulation_steps value that divides the clean row count."
+            exit 1
+        fi
+        stage_iters="$CLEAN_ROWS"
+        echo "Strict no-repeat iterations based on $CLEAN_JSONL: $stage_iters (rows=$CLEAN_ROWS, grad_accum=$GRAD_ACCUM)"
+    else
+        # Round up to multiple of GRAD_ACCUM to ensure the last gradients are applied.
+        stage_iters=$(( ((CLEAN_ROWS + GRAD_ACCUM - 1) / GRAD_ACCUM) * GRAD_ACCUM ))
+        echo "Dynamic iterations based on $CLEAN_JSONL: $stage_iters (rows=$CLEAN_ROWS, grad_accum=$GRAD_ACCUM)"
+    fi
+else
+    # Fallback to YAML if clean file doesn't exist (should not happen if gates pass)
+    stage_iters=$(
+      "$PYTHON_EXE" -c "import sys,yaml; c=yaml.safe_load(open(sys.argv[1], encoding='utf-8')); print(int(c['training']['iters']))" \
+        "$config_file"
+    )
+    echo "Using iterations from config: $stage_iters"
+fi
+
+save_interval=$(
+  "$PYTHON_EXE" -c "import sys,yaml; c=yaml.safe_load(open(sys.argv[1], encoding='utf-8')); print(int(c.get('training', {}).get('steps_per_save', 1000)))" \
+    "$config_file"
+)
+echo "Save interval: $save_interval"
+
+checkpoint_keep_last=$(
+  "$PYTHON_EXE" -c "import sys,yaml; c=yaml.safe_load(open(sys.argv[1], encoding='utf-8')); print(max(0, int(c.get('training', {}).get('checkpoint_keep_last', 5))))" \
+    "$config_file"
+)
+echo "Checkpoint retention: keep latest $checkpoint_keep_last"
 
 # Build training command
 cmd=(
@@ -269,8 +326,22 @@ cmd=(
   --output-path "$adapter_output"
   --run-id "$run_id"
   --iters "$stage_iters"
-  --save-interval 100
+  --save-interval "$save_interval"
 )
+
+append_resume_offset_if_checkpoint() {
+  local checkpoint_path="$1"
+  if [ "$coverage_enabled" = "1" ]; then
+    echo "Strict coverage enabled; skipping filename-derived resume offset for $checkpoint_path"
+    return
+  fi
+  local resume_offset
+  resume_offset=$(resume_offset_from_checkpoint_path "$checkpoint_path")
+  echo "Detected resumption offset: $resume_offset"
+  if [ "$resume_offset" -gt 0 ]; then
+    cmd+=(--resume-offset "$resume_offset")
+  fi
+}
 
 # Determine resume behavior
 if [ -n "$RESUME_FROM" ]; then
@@ -280,6 +351,7 @@ if [ -n "$RESUME_FROM" ]; then
   fi
   echo "Resuming from explicit adapter: $RESUME_FROM"
   cmd+=(--resume-adapter "$RESUME_FROM")
+  append_resume_offset_if_checkpoint "$RESUME_FROM"
   
   if [ "$ALLOW_QUARANTINED" != "1" ]; then
       "$PYTHON_EXE" - <<'PY' "$RESUME_FROM" "$PROJECT_ROOT"
@@ -306,7 +378,8 @@ elif [ "$RESUME_FLAG" == "--resume" ]; then
   if [ -n "$latest_checkpoint" ]; then
     echo "Resuming from checkpoint: $latest_checkpoint"
     cmd+=(--resume-adapter "$latest_checkpoint")
-  elif [ $STAGE_NUM -gt 1 ] && [ -f "$prev_adapter" ]; then
+    append_resume_offset_if_checkpoint "$latest_checkpoint"
+  elif [ $STAGE_NUM -gt 0 ] && [ -f "$prev_adapter" ]; then
     echo "No checkpoint found. Resuming from previous stage adapter: $prev_adapter"
     cmd+=(--resume-adapter "$prev_adapter")
   else
@@ -347,15 +420,26 @@ echo ""
 echo "✓ Stage $STAGE_NUM completed successfully"
 echo "  Final adapter: $adapter_output"
 
+selected_adapter="$adapter_output"
+
 # Publish a stable adapter path for chaining into next stage.
-# 4. Post-training Eval Gate (Mandatory for non-dry-runs)
+# 4. Post-training stage gate and checkpoint selection (mandatory for non-dry-runs)
 if [ -z "$DRY_RUN_FLAG" ]; then
     echo ""
-    echo "Running post-training evaluation gate..."
-    if ./tools/run_eval_gate.sh --config "$config_file" --adapter "$adapter_output"; then
-        echo "✓ Evaluation gate passed."
+    echo "Running post-training stage gate and selecting last passing checkpoint..."
+    selection_json="$checkpoint_dir/selected_checkpoint.json"
+    if "$PYTHON_EXE" tools/select_last_good_checkpoint.py \
+        --config "$config_file" \
+        --preferred-adapter "$adapter_output" \
+        --checkpoint-dir "$checkpoint_dir" \
+        --out "$selection_json" \
+        --num-samples "${STAGE_GATE_NUM_SAMPLES:-100}" \
+        --max-candidates "${STAGE_GATE_MAX_CANDIDATES:-4}"; then
+        selected_adapter=$("$PYTHON_EXE" -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['selected_checkpoint_path'])" "$selection_json")
+        echo "✓ Stage gate passed."
+        echo "  Selected adapter: $selected_adapter"
     else
-        echo "ERROR: Evaluation gate failed. Adapter is quarantined."
+        echo "ERROR: No checkpoint passed the stage gate. Adapter(s) have been quarantined as applicable."
         exit 1
     fi
 fi
@@ -371,18 +455,21 @@ fi
 PUBLISH_ON_SUCCESS="${PUBLISH_ON_SUCCESS:-$PUBLISH_ON_SUCCESS_DEFAULT}"
 if [ "$PUBLISH_ON_SUCCESS" != "1" ]; then
   echo "  Publish skipped (PUBLISH_ON_SUCCESS=$PUBLISH_ON_SUCCESS)."
-elif [ -f "$adapter_output" ]; then
+elif [ -f "$selected_adapter" ]; then
   mkdir -p "$(dirname "$published_adapter")"
-  cp -f "$adapter_output" "$published_adapter"
+  cp -f "$selected_adapter" "$published_adapter"
+  if [ -f "${selected_adapter}.metadata.json" ]; then
+    cp -f "${selected_adapter}.metadata.json" "${published_adapter}.metadata.json"
+  fi
   echo "  Published adapter: $published_adapter"
 else
   echo "  No adapter file produced (likely dry-run); skipping publish copy."
 fi
 
-# Clean up old checkpoints to limit disk usage (keep latest 2 + metadata)
+# Clean up old checkpoints to limit disk usage.
 if [ -d "$checkpoint_dir" ]; then
-  echo "Cleaning old checkpoints in $checkpoint_dir (keeping latest 2)..."
-  stale_ckpts=$(ls -t "$checkpoint_dir"/*_adapters.safetensors 2>/dev/null | tail -n +3 || true)
+  echo "Cleaning old checkpoints in $checkpoint_dir (keeping latest $checkpoint_keep_last)..."
+  stale_ckpts=$(ls -t "$checkpoint_dir"/*_adapters.safetensors 2>/dev/null | tail -n +"$((checkpoint_keep_last + 1))" || true)
   if [ -n "$stale_ckpts" ]; then
     while IFS= read -r ckpt; do
       [ -z "$ckpt" ] && continue

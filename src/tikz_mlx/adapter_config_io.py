@@ -1,13 +1,22 @@
-"""Read and validate mlx-vlm adapter_config.json for curriculum handoffs."""
+"""Read, validate, and materialize mlx-vlm adapter configs for handoffs."""
 
 from __future__ import annotations
 
 import json
 import math
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
-from .checkpointing import resolve_adapter_weights_path
+from .checkpointing import checkpoint_metadata_path, resolve_adapter_weights_path
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def resolve_adapter_config_path(adapter_path: str | Path | None) -> Path | None:
@@ -34,10 +43,285 @@ def load_adapter_lora_hyperparams(adapter_path: str | Path | None) -> dict[str, 
     cfg_path = resolve_adapter_config_path(adapter_path)
     if cfg_path is None:
         return None
-    try:
-        return json.loads(cfg_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    return _read_json(cfg_path)
+
+
+def load_adapter_lora_hyperparams_from_metadata(adapter_path: str | Path | None) -> dict[str, Any] | None:
+    """Read LoRA hyperparameters from the checkpoint metadata sidecar if present."""
+    weights_path = resolve_adapter_weights_path(adapter_path)
+    if weights_path is None:
         return None
+    payload = _read_json(checkpoint_metadata_path(weights_path))
+    if payload is None:
+        payload = _read_json(weights_path.parent / "checkpoint_metadata.json")
+    if payload is None:
+        return None
+    resolved = payload.get("resolved_training_config")
+    if not isinstance(resolved, dict):
+        return None
+    result: dict[str, Any] = {}
+    if "lora_rank" in resolved:
+        result["rank"] = resolved["lora_rank"]
+    if "lora_alpha" in resolved:
+        result["alpha"] = resolved["lora_alpha"]
+    if "lora_dropout" in resolved:
+        result["dropout"] = resolved["lora_dropout"]
+    return result or None
+
+
+def _coerce_lora_hyperparams(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not payload:
+        return None
+    try:
+        rank = int(payload["rank"])
+        alpha = int(payload["alpha"])
+        dropout = float(payload["dropout"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"rank": rank, "alpha": alpha, "dropout": dropout}
+
+
+def load_source_lora_hyperparams(adapter_path: str | Path | None) -> dict[str, Any] | None:
+    """Load source LoRA hyperparameters, preferring immutable checkpoint metadata.
+
+    The root ``runs/adapter_config.json`` can be overwritten by later stages, so a
+    checkpoint's metadata sidecar is a more reliable source when available.
+    """
+    return _coerce_lora_hyperparams(
+        load_adapter_lora_hyperparams_from_metadata(adapter_path)
+    ) or _coerce_lora_hyperparams(load_adapter_lora_hyperparams(adapter_path))
+
+
+def infer_adapter_lora_rank(adapter_path: str | Path | None) -> int | None:
+    """Infer LoRA rank from safetensors ``*.A``/``*.B`` tensor shapes.
+
+    Returns ``None`` for missing or unreadable weights so plan/dry-run tests can
+    still create a shim. Raises if readable LoRA tensors disagree on rank.
+    """
+    weights_path = resolve_adapter_weights_path(adapter_path)
+    if weights_path is None or not weights_path.exists():
+        return None
+    try:
+        from safetensors import safe_open
+    except Exception:
+        return None
+
+    try:
+        handle = safe_open(weights_path, framework="pt")
+    except Exception:
+        return None
+
+    with handle:
+        keys = set(handle.keys())
+        ranks: set[int] = set()
+        for key in keys:
+            if not key.endswith(".A"):
+                continue
+            prefix = key[:-2]
+            b_key = f"{prefix}.B"
+            if b_key not in keys:
+                continue
+            a_shape = list(handle.get_slice(key).get_shape())
+            b_shape = list(handle.get_slice(b_key).get_shape())
+            if len(a_shape) != 2 or len(b_shape) != 2:
+                continue
+            if a_shape[1] != b_shape[0]:
+                raise RuntimeError(
+                    "LoRA tensor rank mismatch inside adapter: "
+                    f"{key} shape={tuple(a_shape)} vs {b_key} shape={tuple(b_shape)}"
+                )
+            ranks.add(int(a_shape[1]))
+
+    if not ranks:
+        return None
+    if len(ranks) != 1:
+        raise RuntimeError(f"Adapter contains multiple LoRA ranks: {sorted(ranks)}")
+    return next(iter(ranks))
+
+
+def _write_target_adapter_config(
+    adapter_dir: Path,
+    *,
+    target_rank: int,
+    target_alpha: int,
+    target_dropout: float,
+) -> None:
+    payload = {
+        "rank": int(target_rank),
+        "alpha": int(target_alpha),
+        "dropout": float(target_dropout),
+    }
+    (adapter_dir / "adapter_config.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def materialize_lora_handoff_adapter(
+    *,
+    source_adapter_path: str | Path,
+    target_dir: str | Path,
+    target_rank: int,
+    target_alpha: int,
+    target_dropout: float,
+    seed: int = 17,
+    init_std: float = 0.01,
+) -> dict[str, Any]:
+    """Create an mlx-vlm adapter directory compatible with target LoRA settings.
+
+    Upward rank changes are supported by preserving old dimensions, adding
+    deterministic random ``A`` columns, and zero-initializing new ``B`` rows. If
+    alpha changes, the copied ``B`` rows are rescaled so the effective adapter
+    delta is unchanged at handoff.
+    """
+    source_weights = resolve_adapter_weights_path(source_adapter_path)
+    if source_weights is None or not source_weights.exists():
+        raise FileNotFoundError(f"Resume adapter weights do not exist: {source_adapter_path}")
+
+    target_dir = Path(target_dir).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_weights = target_dir / "adapters.safetensors"
+
+    inferred_rank = infer_adapter_lora_rank(source_adapter_path)
+    source_hparams = load_source_lora_hyperparams(source_adapter_path) or {}
+    if inferred_rank is not None and source_hparams.get("rank") not in (None, inferred_rank):
+        # A bare published adapter may sit next to a root adapter_config.json
+        # already rewritten for the next stage. Trust tensor shape over that
+        # mutable shim and fall back to alpha=2*rank to preserve the standard
+        # LoRA scale used by this curriculum.
+        source_hparams = {}
+    source_rank = inferred_rank if inferred_rank is not None else source_hparams.get("rank")
+
+    _write_target_adapter_config(
+        target_dir,
+        target_rank=target_rank,
+        target_alpha=target_alpha,
+        target_dropout=target_dropout,
+    )
+
+    result: dict[str, Any] = {
+        "adapter_dir": str(target_dir),
+        "source_weights": str(source_weights),
+        "target_weights": str(target_weights),
+        "source_rank": source_rank,
+        "target_rank": int(target_rank),
+        "source_alpha": source_hparams.get("alpha"),
+        "target_alpha": int(target_alpha),
+        "source_dropout": source_hparams.get("dropout"),
+        "target_dropout": float(target_dropout),
+        "expanded": False,
+        "alpha_rescaled": False,
+        "linked_weights": False,
+    }
+
+    if source_rank is None:
+        _link_or_copy(source_weights, target_weights)
+        result["linked_weights"] = True
+        result["warning"] = "Could not infer source LoRA rank; linked weights without expansion."
+        return result
+
+    source_rank = int(source_rank)
+    if target_rank < source_rank:
+        raise RuntimeError(
+            "Cannot resume a higher-rank LoRA adapter into a lower-rank stage "
+            f"(source rank={source_rank}, target rank={target_rank}). "
+            "Use a same-or-higher rank stage or restart from base."
+        )
+
+    source_alpha = int(source_hparams.get("alpha", source_rank * 2))
+    source_scale = source_alpha / source_rank
+    target_scale = target_alpha / target_rank
+    alpha_scale = source_scale / target_scale
+    needs_weight_rewrite = target_rank != source_rank or not math.isclose(alpha_scale, 1.0)
+    if not needs_weight_rewrite:
+        _link_or_copy(source_weights, target_weights)
+        result["linked_weights"] = True
+        return result
+
+    try:
+        import torch
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+    except Exception as exc:
+        raise RuntimeError(
+            "LoRA rank/alpha handoff requires torch and safetensors.torch to rewrite tensors."
+        ) from exc
+
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(seed)
+    tensors: dict[str, Any] = {}
+    metadata: dict[str, str] = {}
+    with safe_open(source_weights, framework="pt") as handle:
+        raw_metadata = handle.metadata()
+        if raw_metadata:
+            metadata.update({str(k): str(v) for k, v in raw_metadata.items()})
+        keys = list(handle.keys())
+        key_set = set(keys)
+        for key in keys:
+            tensor = handle.get_tensor(key)
+            if key.endswith(".A") and f"{key[:-2]}.B" in key_set and tensor.ndim == 2:
+                old_rank = int(tensor.shape[1])
+                if old_rank != source_rank:
+                    raise RuntimeError(
+                        f"Unexpected LoRA rank for {key}: tensor rank={old_rank}, source rank={source_rank}"
+                    )
+                expanded = torch.empty(
+                    (tensor.shape[0], target_rank),
+                    dtype=tensor.dtype,
+                    device="cpu",
+                )
+                expanded[:, :source_rank] = tensor
+                extra = torch.randn(
+                    (tensor.shape[0], target_rank - source_rank),
+                    generator=generator,
+                    dtype=torch.float32,
+                    device="cpu",
+                ) * init_std
+                expanded[:, source_rank:] = extra.to(dtype=tensor.dtype)
+                tensors[key] = expanded
+            elif key.endswith(".B") and f"{key[:-2]}.A" in key_set and tensor.ndim == 2:
+                old_rank = int(tensor.shape[0])
+                if old_rank != source_rank:
+                    raise RuntimeError(
+                        f"Unexpected LoRA rank for {key}: tensor rank={old_rank}, source rank={source_rank}"
+                    )
+                expanded = torch.zeros(
+                    (target_rank, tensor.shape[1]),
+                    dtype=tensor.dtype,
+                    device="cpu",
+                )
+                expanded[:source_rank, :] = tensor * alpha_scale
+                tensors[key] = expanded
+            else:
+                tensors[key] = tensor
+
+    metadata.update(
+        {
+            "lora_handoff_source_rank": str(source_rank),
+            "lora_handoff_target_rank": str(target_rank),
+            "lora_handoff_source_alpha": str(source_alpha),
+            "lora_handoff_target_alpha": str(target_alpha),
+            "lora_handoff_alpha_scale": f"{alpha_scale:.12g}",
+        }
+    )
+    temp_weights = target_weights.with_name(f"{target_weights.name}.tmp")
+    if temp_weights.exists():
+        temp_weights.unlink()
+    save_file(tensors, str(temp_weights), metadata=metadata)
+    os.replace(temp_weights, target_weights)
+    result["expanded"] = target_rank != source_rank
+    result["alpha_rescaled"] = not math.isclose(alpha_scale, 1.0)
+    result["source_alpha"] = source_alpha
+    return result
 
 
 def validate_resumed_adapter_lora_hyperparams(
