@@ -93,3 +93,22 @@ def test_collapse_probe_suite_records_raw_warning_without_failing(monkeypatch) -
     assert payload["production"]["passed"] is True
     assert payload["raw_greedy_warning"]["passed"] is False
     assert payload["raw_greedy_warning"]["warning_only"] is True
+
+
+def test_collapse_probe_flags_exactly_five_repeated_lines() -> None:
+    text = "\n".join([r"\draw (0,0) -- (1,1);" for _ in range(5)])
+
+    reasons = collapse_probe.check_for_collapse(text)
+
+    assert "Repetition loop detected" in reasons
+
+
+def test_collapse_probe_flags_normalized_draw_arrow_loop() -> None:
+    text = "\n".join(
+        rf"\draw[->] (0,{i}) -- (1,{i});"
+        for i in range(12)
+    )
+
+    reasons = collapse_probe.check_for_collapse(text)
+
+    assert any("normalized" in reason or "Command dominance" in reason for reason in reasons)

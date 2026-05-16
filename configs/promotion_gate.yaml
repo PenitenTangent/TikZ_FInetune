@@ -1,26 +1,42 @@
 promotion_gate:
   stage0:
     min_compile_rate: 0.20
-    max_raw_repetition_loop_rate: 0.01
-    min_fence_ok_rate: 0.98
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.98
     min_substantive_rate: 0.90
   stage1:
     min_compile_rate: 0.55
-    max_raw_repetition_loop_rate: 0.01
-    min_fence_ok_rate: 0.98
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.98
     min_substantive_rate: 0.92
   stage2:
     min_compile_rate: 0.70
-    max_raw_repetition_loop_rate: 0.01
-    min_fence_ok_rate: 0.98
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.98
     min_substantive_rate: 0.92
+  stage3:
+    min_compile_rate: 0.70
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.98
+    min_substantive_rate: 0.92
+  stage4:
+    min_compile_rate: 0.72
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.98
+    min_substantive_rate: 0.92
+  stage5:
+    min_compile_rate: 0.75
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.98
+    min_substantive_rate: 0.93
   normal:
     min_compile_rate: 0.20
-    max_raw_repetition_loop_rate: 0.02
+    max_repetition_loop_rate: 0.00
+    min_closing_fence_exactly_once_rate: 0.95
     min_substantive_rate: 0.80
   stage4_probe:
     min_compile_rate: 0.15
-    max_raw_repetition_loop_rate: 0.02
+    max_repetition_loop_rate: 0.00
     min_substantive_rate: 0.75
   global:
     max_truncation_rate: 0.10

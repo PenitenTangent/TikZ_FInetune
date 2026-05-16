@@ -395,8 +395,8 @@ def train(
                         + "\n"
                     )
 
-            losses = 0
-            n_tokens = 0
+            losses = mx.array(0.0)
+            n_tokens = mx.array(0.0)
             steps = 0
             update_steps = 0
             grad_norms = mx.array(0.0)

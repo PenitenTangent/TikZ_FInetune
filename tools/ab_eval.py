@@ -199,7 +199,8 @@ def _generate(
     for chunk in gen:
         text_chunk = MlxVlmAdapter._coerce_generation_text(chunk)
         result += text_chunk
-        if result.count("```") >= 2: break
+        if result.count("```") >= 1:
+            break
     return result
 
 
@@ -290,7 +291,7 @@ def _score_generated_sample(
         "code_length": len(latex or ""),
         "raw_token_length": int(generated.get("raw_token_length", _fallback_token_count(raw_response))),
         "code_token_length": int(generated.get("code_token_length", _fallback_token_count(latex or ""))),
-        "truncated": len(raw_response) >= generated["max_tokens"] * 3,
+        "truncated": int(generated.get("raw_token_length", 0)) >= int(0.98 * generated["max_tokens"]),
     }
 
 

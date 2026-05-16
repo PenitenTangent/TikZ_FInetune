@@ -221,6 +221,8 @@ def test_curriculum_stage0_uses_current_stable_params_without_unlikelihood() -> 
     assert config.training.repetition_unlikelihood_weight == pytest.approx(0.0)
     assert config.training.collapse_probe.enabled is True
     assert config.training.collapse_probe.interval_steps == 50
+    assert config.training.val_batches == 2
+    assert config.training.validation_compile_probe_limit == 2
 
 
 def test_plan_training_threads_resume_adapter_into_namespace() -> None:
@@ -401,6 +403,7 @@ def test_curriculum_stage_configs_use_lora_num_layers_28_and_strict_coverage() -
         assert 0.01 <= cfg.training.repetition_unlikelihood_weight <= 0.10
         assert cfg.training.repetition_unlikelihood_window == 64
         assert cfg.training.repetition_unlikelihood_min_context == 16
+        assert cfg.training.repetition_unlikelihood_warmup_steps == 500
 
 
 def test_curriculum_stage2_switches_to_1024_after_70_percent() -> None:
@@ -409,6 +412,27 @@ def test_curriculum_stage2_switches_to_1024_after_70_percent() -> None:
     assert cfg.model.max_context_tokens == 1024
     assert cfg.training.max_seq_length_schedule == ((0.0, 768), (0.7, 1024))
     assert cfg.training.repetition_unlikelihood_weight == pytest.approx(0.02)
+
+
+def test_long_context_curriculum_stages_use_safer_schedules() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    stage3 = load_config(repo / "configs" / "curriculum_stage3.yaml")
+    stage4 = load_config(repo / "configs" / "curriculum_stage4.yaml")
+    stage5 = load_config(repo / "configs" / "curriculum_stage5.yaml")
+
+    assert stage3.training.learning_rate == pytest.approx(1.0e-6)
+    assert stage3.training.lora_dropout == pytest.approx(0.06)
+    assert stage3.training.repetition_unlikelihood_weight == pytest.approx(0.03)
+    assert stage3.training.max_seq_length_schedule == ((0.0, 1024), (0.4, 1280), (0.75, 1536))
+
+    assert stage4.training.learning_rate == pytest.approx(7.5e-7)
+    assert stage4.training.lora_dropout == pytest.approx(0.05)
+    assert stage4.training.repetition_unlikelihood_weight == pytest.approx(0.03)
+    assert stage4.training.max_seq_length_schedule == ((0.0, 1536), (0.6, 1792))
+
+    assert stage5.training.learning_rate == pytest.approx(5.0e-7)
+    assert stage5.training.lora_dropout == pytest.approx(0.04)
+    assert stage5.training.repetition_unlikelihood_weight == pytest.approx(0.02)
 
 
 def test_collect_lora_targets_reports_expected_suffixes() -> None:
@@ -438,6 +462,36 @@ def test_collect_lora_targets_reports_expected_suffixes() -> None:
     assert audit["target_count"] == 7
     assert audit["missing_expected_suffixes"] == []
     assert all(audit["expected_suffix_hits"].values())
+    assert audit["suffix_counts"]["q_proj"] == 1
+    assert audit["layer_indices"] == [0]
+
+
+def test_collect_lora_targets_reports_undercovered_suffixes() -> None:
+    class FakeLoRaLayer:
+        pass
+
+    class FakeLanguageModel:
+        def named_modules(self):
+            return [
+                ("model.layers.6.self_attn.q_proj", FakeLoRaLayer()),
+                ("model.layers.7.self_attn.q_proj", FakeLoRaLayer()),
+                ("model.layers.6.self_attn.v_proj", FakeLoRaLayer()),
+            ]
+
+    class FakeModel:
+        language_model = FakeLanguageModel()
+
+    audit = collect_lora_targets(
+        FakeModel(),
+        expected_lora_num_layers=2,
+        expected_min_layer=6,
+        expected_max_layer=7,
+    )
+
+    assert audit["suffix_counts"]["q_proj"] == 2
+    assert audit["undercovered_suffixes"]["v_proj"] == 1
+    assert audit["missing_expected_suffixes"]
+    assert audit["unexpected_layer_indices_below_min"] == []
 
 
 def test_strict_coverage_rejects_filename_resume_offset() -> None:
@@ -705,6 +759,28 @@ def test_training_config_fingerprint_ignores_config_path(tmp_path: Path) -> None
     second = _compute_training_config_fingerprint(config, plan)
 
     assert first == second
+
+
+def test_training_config_fingerprint_tracks_loss_and_schedule_settings(tmp_path: Path) -> None:
+    config = load_config(CONFIG_PATH)
+    dataset_path = tmp_path / "train.jsonl"
+    dataset_path.write_text('{"messages": []}\n', encoding="utf-8")
+    plan = plan_training(
+        config,
+        dataset_path=dataset_path,
+        dry_run=True,
+        require_full_opt_in=False,
+    )
+
+    first = _compute_training_config_fingerprint(config, plan)
+    config.training.repetition_unlikelihood_weight += 0.01
+    second = _compute_training_config_fingerprint(config, plan)
+    config.training.repetition_unlikelihood_weight -= 0.01
+    config.training.max_seq_length_schedule = ((0.0, 512), (0.5, 768))
+    third = _compute_training_config_fingerprint(config, plan)
+
+    assert first != second
+    assert first != third
 
 
 def test_prune_stage1_checkpoints_scoped_to_run_id(tmp_path: Path) -> None:

@@ -41,6 +41,8 @@ def main() -> int:
         description="Run stage gates from newest to oldest and select the latest adapter that passes."
     )
     parser.add_argument("--config", required=True)
+    parser.add_argument("--stage", required=True)
+    parser.add_argument("--gate-config", default="configs/promotion_gate.yaml")
     parser.add_argument("--checkpoint-dir", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--preferred-adapter", default=None, help="Adapter to test before numeric checkpoints.")
@@ -86,6 +88,10 @@ def main() -> int:
             args.config,
             "--adapter",
             str(candidate),
+            "--stage",
+            args.stage,
+            "--gate-config",
+            args.gate_config,
             "--checkpoint-dir",
             str(checkpoint_dir),
             "--num-samples",

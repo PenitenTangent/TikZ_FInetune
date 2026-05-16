@@ -8,6 +8,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CONFIG=""
 ADAPTER=""
+STAGE=""
+GATE_CONFIG="configs/promotion_gate.yaml"
 CHECKPOINT_DIR=""
 NUM_SAMPLES=100
 NUM_SAMPLES_SET=0
@@ -25,6 +27,8 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
     --adapter) ADAPTER="$2"; shift 2 ;;
+    --stage) STAGE="$2"; shift 2 ;;
+    --gate-config) GATE_CONFIG="$2"; shift 2 ;;
     --checkpoint-dir) CHECKPOINT_DIR="$2"; shift 2 ;;
     --num-samples) NUM_SAMPLES="$2"; NUM_SAMPLES_SET=1; shift 2 ;;
     --sentinel-manifest) SENTINEL_MANIFEST="$2"; shift 2 ;;
@@ -40,8 +44,8 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-if [ -z "$CONFIG" ] || [ -z "$ADAPTER" ]; then
-  echo "Usage: $0 --config <config> --adapter <adapter> [--checkpoint-dir <dir>] [--num-samples 100]"
+if [ -z "$CONFIG" ] || [ -z "$ADAPTER" ] || [ -z "$STAGE" ]; then
+  echo "Usage: $0 --config <config> --adapter <adapter> --stage <stage0|...|stage5|normal> [--checkpoint-dir <dir>] [--num-samples 100]"
   exit 1
 fi
 case "$GATE_MODE" in
@@ -68,6 +72,7 @@ echo ""
 echo "========================================="
 echo "  Stage Gate"
 echo "  Adapter:    $ADAPTER"
+echo "  Stage:      $STAGE"
 echo "  Checkpoint: $CHECKPOINT_DIR"
 echo "  Output:     $OUT_DIR"
 echo "  Mode:       $GATE_MODE"
@@ -98,6 +103,8 @@ if [ "$SKIP_EVAL_GATE" -eq 0 ]; then
   eval_args=(
     --config "$CONFIG"
     --adapter "$ADAPTER"
+    --stage "$STAGE"
+    --gate-config "$GATE_CONFIG"
     --num-samples "$NUM_SAMPLES"
     --sentinel-manifest "$SENTINEL_MANIFEST"
     --out-dir "$OUT_DIR/eval"
@@ -118,6 +125,7 @@ cat > "$OUT_DIR/stage_gate_result.json" <<JSON
 {
   "passed": true,
   "adapter": "$ADAPTER",
+  "stage": "$STAGE",
   "checkpoint_dir": "$CHECKPOINT_DIR",
   "config": "$CONFIG",
   "gate_mode": "$GATE_MODE",

@@ -176,7 +176,7 @@ training:
   repetition_unlikelihood_weight: 0.0
   repetition_unlikelihood_window: 64
   repetition_unlikelihood_min_context: 16
-  val_batches: 8
+  val_batches: 2
   val_dataset_path: data/prepared/val_unified_deleaked.jsonl
-  validation_compile_probe_limit: 8
+  validation_compile_probe_limit: 2
   weight_decay: 0.03

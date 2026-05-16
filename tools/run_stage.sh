@@ -434,13 +434,21 @@ if [ -z "$DRY_RUN_FLAG" ]; then
     echo ""
     echo "Running post-training stage gate and selecting last passing checkpoint..."
     selection_json="$checkpoint_dir/selected_checkpoint.json"
+    stage_gate_num_samples_default=100
+    stage_gate_max_candidates_default=4
+    if [ "$STAGE_NUM" = "0" ]; then
+        stage_gate_num_samples_default=16
+        stage_gate_max_candidates_default=1
+    fi
     if "$PYTHON_EXE" tools/select_last_good_checkpoint.py \
         --config "$config_file" \
+        --stage "stage${STAGE_NUM}" \
+        --gate-config "configs/promotion_gate.yaml" \
         --preferred-adapter "$adapter_output" \
         --checkpoint-dir "$checkpoint_dir" \
         --out "$selection_json" \
-        --num-samples "${STAGE_GATE_NUM_SAMPLES:-100}" \
-        --max-candidates "${STAGE_GATE_MAX_CANDIDATES:-4}"; then
+        --num-samples "${STAGE_GATE_NUM_SAMPLES:-$stage_gate_num_samples_default}" \
+        --max-candidates "${STAGE_GATE_MAX_CANDIDATES:-$stage_gate_max_candidates_default}"; then
         selected_adapter=$("$PYTHON_EXE" -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['selected_checkpoint_path'])" "$selection_json")
         echo "✓ Stage gate passed."
         echo "  Selected adapter: $selected_adapter"

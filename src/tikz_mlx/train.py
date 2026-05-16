@@ -423,7 +423,13 @@ def _iter_named_modules_for_lora_audit(model: Any) -> list[tuple[str, Any]]:
     return named_modules
 
 
-def collect_lora_targets(model: Any) -> dict[str, Any]:
+def collect_lora_targets(
+    model: Any,
+    *,
+    expected_lora_num_layers: int | None = None,
+    expected_min_layer: int | None = None,
+    expected_max_layer: int | None = None,
+) -> dict[str, Any]:
     """Return actual LoRA target module names after adapter setup/unwrapping."""
 
     targets: set[str] = set()
@@ -457,13 +463,63 @@ def collect_lora_targets(model: Any) -> dict[str, Any]:
         suffix: any(target.endswith(suffix) or f".{suffix}." in target for target in sorted_targets)
         for suffix in EXPECTED_LORA_TARGET_SUFFIXES
     }
+    suffix_counts = {
+        suffix: sum(
+            1 for target in sorted_targets
+            if target.endswith(suffix) or f".{suffix}." in target
+        )
+        for suffix in EXPECTED_LORA_TARGET_SUFFIXES
+    }
+    layer_indices = sorted(
+        {
+            layer_idx
+            for target in sorted_targets
+            if (layer_idx := extract_layer_index(target)) is not None
+        }
+    )
+    min_layer = layer_indices[0] if layer_indices else None
+    max_layer = layer_indices[-1] if layer_indices else None
+    undercovered_suffixes: dict[str, int] = {}
+    if expected_lora_num_layers is not None:
+        undercovered_suffixes = {
+            suffix: count
+            for suffix, count in suffix_counts.items()
+            if count < expected_lora_num_layers
+        }
+    unexpected_layer_indices_below_min = [
+        layer_idx for layer_idx in layer_indices
+        if expected_min_layer is not None and layer_idx < expected_min_layer
+    ]
+    unexpected_layer_indices_above_max = [
+        layer_idx for layer_idx in layer_indices
+        if expected_max_layer is not None and layer_idx > expected_max_layer
+    ]
+    missing_expected_layers: list[int] = []
+    if expected_min_layer is not None and expected_max_layer is not None:
+        missing_expected_layers = [
+            layer_idx
+            for layer_idx in range(expected_min_layer, expected_max_layer + 1)
+            if layer_idx not in layer_indices
+        ]
     return {
         "target_count": len(sorted_targets),
         "targets": sorted_targets,
+        "suffix_counts": suffix_counts,
         "expected_suffix_hits": suffix_hits,
         "missing_expected_suffixes": [
             suffix for suffix, present in suffix_hits.items() if not present
         ],
+        "undercovered_suffixes": undercovered_suffixes,
+        "layer_indices": layer_indices,
+        "min_layer": min_layer,
+        "max_layer": max_layer,
+        "expected_lora_num_layers": expected_lora_num_layers,
+        "expected_min_layer": expected_min_layer,
+        "expected_max_layer": expected_max_layer,
+        "observed_lora_layer_count": len(layer_indices),
+        "unexpected_layer_indices_below_min": unexpected_layer_indices_below_min,
+        "unexpected_layer_indices_above_max": unexpected_layer_indices_above_max,
+        "missing_expected_layers": missing_expected_layers,
     }
 
 
@@ -808,6 +864,20 @@ def _compute_training_config_fingerprint(
         "lora_rank": plan.args.lora_rank if lora_rank is None else int(lora_rank),
         "lora_alpha": plan.args.lora_alpha if lora_alpha is None else int(lora_alpha),
         "lora_dropout": plan.args.lora_dropout if lora_dropout is None else float(lora_dropout),
+        "lora_num_layers": plan.args.lora_num_layers,
+        "max_grad_norm": config.training.max_grad_norm,
+        "weight_decay": config.training.weight_decay,
+        "lr_warmup_fraction": config.training.lr_warmup_fraction,
+        "max_seq_length_schedule": config.training.max_seq_length_schedule,
+        "repetition_unlikelihood_enabled": config.training.repetition_unlikelihood_enabled,
+        "repetition_unlikelihood_weight": config.training.repetition_unlikelihood_weight,
+        "repetition_unlikelihood_window": config.training.repetition_unlikelihood_window,
+        "repetition_unlikelihood_min_context": config.training.repetition_unlikelihood_min_context,
+        "repetition_unlikelihood_warmup_steps": config.training.repetition_unlikelihood_warmup_steps,
+        "syntax_weighted_loss": config.training.syntax_weighted_loss,
+        "syntax_structural_weight": config.training.syntax_structural_weight,
+        "syntax_command_weight": config.training.syntax_command_weight,
+        "syntax_coordinate_weight": config.training.syntax_coordinate_weight,
         "coverage": {
             "order_mode": config.training.coverage.order_mode,
             "order_seed_base": config.training.coverage.order_seed_base,
@@ -2844,22 +2914,64 @@ def _execute_training(
                 f"optimizer_state_entries={optimizer_state_entries}"
             )
 
-        lora_targets = collect_lora_targets(model)
+        expected_lora_num_layers = int(lora_num_layers) if lora_num_layers is not None else None
+        lora_targets = collect_lora_targets(
+            model,
+            expected_lora_num_layers=expected_lora_num_layers,
+            expected_min_layer=cutoff if expected_lora_num_layers is not None else None,
+            expected_max_layer=(total_layers - 1) if expected_lora_num_layers is not None and total_layers else None,
+        )
         lora_targets_path = run_dir_for_named / "lora_targets.json"
         lora_targets_path.write_text(
             json.dumps(lora_targets, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        lora_audit_failures: list[str] = []
         if lora_targets["missing_expected_suffixes"]:
-            plan.warnings.append(
-                "LoRA target audit missing expected suffixes: "
-                f"{', '.join(lora_targets['missing_expected_suffixes'])}. "
-                f"Wrote {lora_targets_path}"
+            lora_audit_failures.append(
+                "missing expected suffixes: "
+                f"{', '.join(lora_targets['missing_expected_suffixes'])}"
             )
-        else:
-            plan.warnings.append(
-                f"LoRA target audit wrote {lora_targets['target_count']} targets to {lora_targets_path}"
+        if lora_targets["undercovered_suffixes"]:
+            lora_audit_failures.append(
+                "undercovered suffixes: "
+                + ", ".join(
+                    f"{suffix}={count}/{expected_lora_num_layers}"
+                    for suffix, count in lora_targets["undercovered_suffixes"].items()
+                )
             )
+        if lora_targets["unexpected_layer_indices_below_min"]:
+            lora_audit_failures.append(
+                "unexpected early LoRA layers: "
+                + ", ".join(map(str, lora_targets["unexpected_layer_indices_below_min"]))
+            )
+        if lora_targets["unexpected_layer_indices_above_max"]:
+            lora_audit_failures.append(
+                "unexpected LoRA layers above model range: "
+                + ", ".join(map(str, lora_targets["unexpected_layer_indices_above_max"]))
+            )
+        if (
+            expected_lora_num_layers is not None
+            and lora_targets["observed_lora_layer_count"] < expected_lora_num_layers
+        ):
+            lora_audit_failures.append(
+                "observed LoRA layer count below expected: "
+                f"{lora_targets['observed_lora_layer_count']}/{expected_lora_num_layers}"
+            )
+        if lora_targets["missing_expected_layers"]:
+            lora_audit_failures.append(
+                "missing expected LoRA layers: "
+                + ", ".join(map(str, lora_targets["missing_expected_layers"]))
+            )
+        if lora_audit_failures:
+            raise RuntimeError(
+                "LoRA target audit failed. "
+                + "; ".join(lora_audit_failures)
+                + f". See {lora_targets_path}"
+            )
+        plan.warnings.append(
+            f"LoRA target audit wrote {lora_targets['target_count']} targets to {lora_targets_path}"
+        )
 
         telemetry_path = Path(plan.args.output_path).expanduser().resolve().parent / "phase_boundary_telemetry.json"
         write_phase_boundary_telemetry(

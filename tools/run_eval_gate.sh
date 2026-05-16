@@ -4,7 +4,7 @@
 # On failure, quarantines the specific adapter and writes a failure bundle.
 #
 # Usage:
-#   ./tools/run_eval_gate.sh --config <config> --adapter <adapter_path> [--num-samples 100]
+#   ./tools/run_eval_gate.sh --config <config> --adapter <adapter_path> --stage <stage0|...|stage5|normal> [--num-samples 100]
 set -euo pipefail
 
 PYTHON_EXE="${PYTHON_EXE:-python3}"
@@ -12,6 +12,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CONFIG=""
 ADAPTER=""
+STAGE=""
+GATE_CONFIG="configs/promotion_gate.yaml"
 NUM_SAMPLES=100
 SENTINEL_MANIFEST="data/manifests/sentinel_100_deleaked.json"
 EVAL_DIR=""
@@ -25,6 +27,8 @@ while [[ "$#" -gt 0 ]]; do
     case $1 in
         --config) CONFIG="$2"; shift ;;
         --adapter) ADAPTER="$2"; shift ;;
+        --stage) STAGE="$2"; shift ;;
+        --gate-config) GATE_CONFIG="$2"; shift ;;
         --num-samples) NUM_SAMPLES="$2"; shift ;;
         --sentinel-manifest) SENTINEL_MANIFEST="$2"; shift ;;
         --out-dir) EVAL_DIR="$2"; shift ;;
@@ -38,8 +42,8 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-if [ -z "$CONFIG" ] || [ -z "$ADAPTER" ]; then
-    echo "Usage: $0 --config <config> --adapter <adapter_path> [--num-samples 100] [--sentinel-manifest <path>]"
+if [ -z "$CONFIG" ] || [ -z "$ADAPTER" ] || [ -z "$STAGE" ]; then
+    echo "Usage: $0 --config <config> --adapter <adapter_path> --stage <stage0|...|stage5|normal> [--num-samples 100] [--sentinel-manifest <path>]"
     exit 1
 fi
 
@@ -93,7 +97,10 @@ fi
 echo ""
 echo "Checking promotion gate thresholds..."
 GATE_PASSED=0
-if [ "$AB_EVAL_PASSED" -eq 1 ] && "$PYTHON_EXE" tools/check_promotion_gate.py --eval-dir "$EVAL_DIR"; then
+if [ "$AB_EVAL_PASSED" -eq 1 ] && "$PYTHON_EXE" tools/check_promotion_gate.py \
+    --eval-dir "$EVAL_DIR" \
+    --stage "$STAGE" \
+    --gate-config "$GATE_CONFIG"; then
     GATE_PASSED=1
 fi
 

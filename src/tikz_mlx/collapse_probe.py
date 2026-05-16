@@ -1,5 +1,6 @@
 import inspect
 import re
+from collections import Counter
 from typing import Any
 
 import mlx.core as mx
@@ -9,7 +10,13 @@ SENTINEL_PROMPTS = [
     "Generate a vertical black line.",
     "Draw a red circle centered at (0,0).",
     "Create a simple flow chart with two boxes.",
-    "Draw a sine wave from x=0 to x=6."
+    "Draw a sine wave from x=0 to x=6.",
+    "Draw a directed arrow from node A to node B.",
+    "Draw three boxes connected by arrows.",
+    "Draw a small commutative diagram with four nodes.",
+    "Draw coordinate axes with two labeled arrows.",
+    "Draw a graph with five nodes and directed edges.",
+    "Draw a rectangle, a circle, and one arrow between them.",
 ]
 
 PRODUCTION_DECODING = {
@@ -25,6 +32,32 @@ RAW_GREEDY_DECODING = {
     "top_p": 1.0,
 }
 
+
+COMMAND_RE = re.compile(r"\\[A-Za-z@]+(?:\[[^\]]*\])?")
+NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def normalize_loop_token(tok: str) -> str:
+    tok = re.sub(r"\\draw\[[^\]]*\]", r"\\draw[<OPT>]", tok)
+    tok = NUMBER_RE.sub("<NUM>", tok)
+    tok = re.sub(r"\(<NUM>,<NUM>\)", "(<COORD>)", tok)
+    return tok
+
+
+def _ngram_diversity(tokens: list[str], n: int) -> float:
+    if len(tokens) <= n:
+        return 1.0
+    ngrams = [tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1)]
+    return len(set(ngrams)) / len(ngrams)
+
+
+def command_stems(text: str) -> list[str]:
+    stems = []
+    for cmd in COMMAND_RE.findall(text):
+        stems.append(cmd.split("[", 1)[0])
+    return stems
+
+
 def check_for_collapse(text: str) -> list[str]:
     reasons = []
     if "\\PreviewEnvironment" in text:
@@ -36,21 +69,37 @@ def check_for_collapse(text: str) -> list[str]:
     
     # Check for repetition loops (e.g. same line 5 times)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    for i in range(len(lines) - 5):
+    for i in range(len(lines) - 4):
         if len(set(lines[i:i+5])) == 1:
             reasons.append("Repetition loop detected")
             break
 
-    # Check for structural repetition via bigram diversity and unigram dominance.
+    # Check for structural repetition via raw/normalized diversity and dominance.
     # A model stuck in a \draw-coordinates loop passes the identical-line check because
     # coordinates differ, but token-level metrics expose the structural repetition.
     tokens = text.split()
     if len(tokens) >= 20:
-        # Bigram entropy: catches simple word/symbol repetition loops.
-        bigrams = [f"{tokens[i]}|{tokens[i+1]}" for i in range(len(tokens) - 1)]
-        unique_ratio = len(set(bigrams)) / len(bigrams)
-        if unique_ratio < 0.20:
-            reasons.append(f"Low bigram diversity ({unique_ratio:.2f} < 0.20)")
+        raw_bigram_diversity = _ngram_diversity(tokens, 2)
+        normalized_tokens = [normalize_loop_token(tok) for tok in tokens]
+        normalized_bigram_diversity = _ngram_diversity(normalized_tokens, 2)
+        normalized_trigram_diversity = _ngram_diversity(normalized_tokens, 3)
+        if raw_bigram_diversity < 0.20:
+            reasons.append(f"Low bigram diversity ({raw_bigram_diversity:.2f} < 0.20)")
+        if normalized_bigram_diversity < 0.20:
+            reasons.append(
+                f"Low normalized bigram diversity ({normalized_bigram_diversity:.2f} < 0.20)"
+            )
+        if normalized_trigram_diversity < 0.25:
+            reasons.append(
+                f"Low normalized trigram diversity ({normalized_trigram_diversity:.2f} < 0.25)"
+            )
+
+        cmds = command_stems(text)
+        if len(cmds) >= 10:
+            top_cmd, top_count = Counter(cmds).most_common(1)[0]
+            command_share = top_count / len(cmds)
+            if command_share > 0.85 and normalized_bigram_diversity < 0.35:
+                reasons.append(f"Command dominance: {top_cmd} is {command_share:.0%} of commands")
 
         # Unigram dominance: catches \draw-loop collapse where one command
         # makes up >30% of all tokens (but coordinates differ, fooling bigram check).
@@ -60,7 +109,7 @@ def check_for_collapse(text: str) -> list[str]:
         max_token = max(token_counts, key=token_counts.get)
         dominance = token_counts[max_token] / len(tokens)
         # Exclude common structural tokens that are legitimately dominant.
-        _ALLOWED_DOMINANT = {r"\draw", "--", ";", ",", "(", ")", "{", "}"}
+        _ALLOWED_DOMINANT = {"--", ";", ",", "(", ")", "{", "}"}
         if dominance > 0.30 and max_token not in _ALLOWED_DOMINANT:
             reasons.append(f"Unigram dominance: '{max_token}' is {dominance:.0%} of output")
 

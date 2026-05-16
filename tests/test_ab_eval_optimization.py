@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.ab_eval import _base_cache_key, _score_generated_sample, _select_manifest_samples, _variant_metrics
-from tools.check_promotion_gate import evaluate_promotion_gate
+from tools.check_promotion_gate import evaluate_promotion_gate, load_gate_thresholds
 
 
 def test_manifest_selection_respects_quick_gate_limit(tmp_path: Path) -> None:
@@ -69,6 +69,20 @@ def test_score_generated_sample_treats_empty_output_as_failed_quality() -> None:
     assert result["bad_pattern_violations"] == ["empty_output"]
 
 
+def test_score_generated_sample_uses_token_based_truncation() -> None:
+    result = _score_generated_sample(
+        {
+            "sample": {"sample_id": "s0", "prompt_text": "p", "reference_code": "r"},
+            "raw_response": "short",
+            "raw_token_length": 126,
+            "max_tokens": 128,
+        },
+        compiler_config=_Compiler("tectonic"),
+    )
+
+    assert result["truncated"] is True
+
+
 def _result(sample_id: str, raw_tokens: int, code_tokens: int) -> dict:
     return {
         "sample_id": sample_id,
@@ -126,3 +140,37 @@ def test_promotion_gate_rejects_excessive_average_token_ratio() -> None:
 
     assert result["pass"] is False
     assert any("avg_raw_token_ratio_vs_base" in violation for violation in result["violations"])
+
+
+def test_promotion_gate_loads_stage_thresholds_from_config() -> None:
+    thresholds = load_gate_thresholds(Path("configs/promotion_gate.yaml"), "stage0")
+
+    assert thresholds["min_compile_rate"] == 0.20
+    assert thresholds["max_repetition_loop_rate"] == 0.0
+    assert thresholds["min_closing_fence_exactly_once_rate"] == 0.98
+    assert thresholds["max_truncation_rate"] == 0.10
+
+
+def test_promotion_gate_uses_loaded_stage_compile_floor() -> None:
+    passing_common = {
+        "compile_rate": 0.22,
+        "substantive_rate": 0.95,
+        "bad_pattern_pass_rate": 1.0,
+        "preview_environment_rate": 0.0,
+        "assistant_usepackage_rate": 0.0,
+        "assistant_documentclass_rate": 0.0,
+        "decorations_geometric_rate": 0.0,
+        "repetition_loop_rate": 0.0,
+        "closing_fence_exactly_once_rate": 1.0,
+        "truncation_rate": 0.0,
+        "avg_code_length_ratio_vs_base": 1.0,
+        "avg_raw_token_ratio_vs_base": 1.0,
+        "avg_code_token_ratio_vs_base": 1.0,
+    }
+
+    result = evaluate_promotion_gate(
+        {"finetuned": passing_common},
+        thresholds=load_gate_thresholds(Path("configs/promotion_gate.yaml"), "stage0"),
+    )
+
+    assert result["pass"] is True
