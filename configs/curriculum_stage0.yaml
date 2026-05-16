@@ -167,8 +167,8 @@ training:
   syntax_weighted_loss: false
   train_dataset_path: data/prepared/curriculum/synthetic_primitives_filtered.jsonl
   train_on_completions: true
-  repetition_unlikelihood_enabled: true
-  repetition_unlikelihood_weight: 0.05
+  repetition_unlikelihood_enabled: false
+  repetition_unlikelihood_weight: 0.0
   repetition_unlikelihood_window: 64
   repetition_unlikelihood_min_context: 16
   val_batches: 8

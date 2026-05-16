@@ -106,7 +106,7 @@ training:
   max_seq_length_schedule:
   - - 0.0
     - 768
-  - - 0.5
+  - - 0.7
     - 1024
   min_validation_compilation_rate: 0.2
   pretokenized_cache_path: data/prepared/curriculum/train_stage2_clean_tokenized.npy
@@ -173,7 +173,7 @@ training:
   train_dataset_path: data/prepared/curriculum/train_stage2_clean.jsonl
   train_on_completions: true
   repetition_unlikelihood_enabled: true
-  repetition_unlikelihood_weight: 0.03
+  repetition_unlikelihood_weight: 0.02
   repetition_unlikelihood_window: 64
   repetition_unlikelihood_min_context: 16
   repetition_unlikelihood_warmup_steps: 500

@@ -173,7 +173,13 @@ PY
 # Check for existing checkpoint
 latest_checkpoint=""
 if [ -d "$checkpoint_dir" ]; then
-  latest_checkpoint=$(ls -t "$checkpoint_dir"/*_adapters.safetensors 2>/dev/null | head -1)
+  # Prioritize the 'last_probe_pass' checkpoint if it exists (safe recovery)
+  if [ -f "$checkpoint_dir/last_probe_pass_adapters.safetensors" ]; then
+    latest_checkpoint="$checkpoint_dir/last_probe_pass_adapters.safetensors"
+    echo "INFO: Found safe checkpoint from last successful probe pass."
+  else
+    latest_checkpoint=$(ls -t "$checkpoint_dir"/[0-9]*_adapters.safetensors 2>/dev/null | head -1)
+  fi
 fi
 
 # ── Data quality gates ───────────────────────────────────────────────────────

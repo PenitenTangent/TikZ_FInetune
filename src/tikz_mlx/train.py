@@ -1056,6 +1056,25 @@ def _prepare_resume_adapter_directory(
     return adapter_dir
 
 
+def _coverage_resume_request(
+    adapter_path: str | Path | None,
+    run_id: str,
+) -> tuple[bool, CheckpointResumeInfo | None]:
+    """Return whether strict coverage should treat an adapter as same-run resume.
+
+    A checkpoint from a different run is a cross-stage warm start: weights should
+    load, but the new stage must initialize its own coverage cursor at step 0.
+    Missing or ambiguous metadata stays conservative and is treated as a resume.
+    """
+    if adapter_path in (None, ""):
+        return False, None
+
+    info = _read_checkpoint_resume_info(Path(adapter_path))
+    if info is not None and info.run_id is not None and info.run_id != run_id:
+        return False, info
+    return True, info
+
+
 def _resolve_resume_adapter_path(
     config: PipelineConfig,
     resume_adapter: Path | None,
@@ -1831,6 +1850,8 @@ def _repetition_unlikelihood_loss(
     effective_mask: Any,
     window: int,
     min_context: int,
+    ngram_size: int = 4,
+    min_repeats: int = 2,
 ) -> Any:
     mx = import_mlx_core()
     if window <= 0:
@@ -1843,55 +1864,62 @@ def _repetition_unlikelihood_loss(
     if seq_len <= 1:
         return mx.array(0.0, dtype=mx.float32)
 
+    ngram_size = max(2, int(ngram_size))
+    prefix_len = ngram_size - 1
+    min_repeats = max(1, int(min_repeats))
+    if seq_len <= prefix_len:
+        return mx.array(0.0, dtype=mx.float32)
+
+    def shifted_tokens(shift: int) -> Any:
+        if shift <= 0:
+            return labels
+        return mx.pad(
+            labels[:, :-shift],
+            [(0, 0), (shift, 0)],
+            mode="constant",
+            constant_values=0,
+        )
+
+    def prefix_match_for_offset(offset: int) -> Any:
+        match = mx.ones(labels.shape, dtype=mx.float32)
+        for j in range(prefix_len):
+            current = shifted_tokens(prefix_len - j)
+            previous = shifted_tokens(offset + prefix_len - j)
+            match = match * (current == previous).astype(mx.float32)
+        return match
+
     log_probs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
     probs = mx.exp(log_probs)
     positions = mx.repeat(mx.expand_dims(mx.arange(seq_len), 0), batch_size, axis=0)
-    position_mask = (positions >= int(min_context)).astype(mx.float32)
+    position_mask = (positions >= max(int(min_context), prefix_len)).astype(mx.float32)
 
     total = mx.array(0.0, dtype=mx.float32)
     count = mx.array(0.0, dtype=mx.float32)
 
-    # (1) Immediate token-repeat penalty: discourage emitting the previous token
-    # again when it's not the gold target.
-    prev_token = mx.pad(
-        labels[:, :-1],
-        [(0, 0), (1, 0)],
-        mode="constant",
-        constant_values=0,
-    )
-    offset_mask = (positions >= 1).astype(mx.float32)
-    non_target_mask = (prev_token != labels).astype(mx.float32)
-    valid_mask = effective_mask * position_mask * offset_mask * non_target_mask
-    candidate_probs = mx.take_along_axis(
-        probs,
-        mx.expand_dims(prev_token, axis=-1),
-        axis=-1,
-    ).squeeze(-1)
-    penalty = -mx.log(mx.maximum(1.0 - candidate_probs, 1e-6))
-    total = total + mx.sum(penalty * valid_mask)
-    count = count + mx.sum(valid_mask)
-
-    # (2) Bigram continuation penalty: for the current previous token, penalize
-    # tokens that have already followed that token in the recent window.
-    prev_tokens = prev_token
-    max_offset = min(int(window), seq_len - 2)
+    # Loop-only unlikelihood: penalize a token only when it would continue an
+    # n-gram prefix that already occurred repeatedly in the recent context.
+    max_offset = min(int(window), seq_len - prefix_len - 1)
+    repeated_prefix_count = mx.zeros(labels.shape, dtype=mx.float32)
     for offset in range(1, max_offset + 1):
-        context_prev = mx.pad(
-            labels[:, : -(offset + 1)],
-            [(0, 0), (offset + 1, 0)],
-            mode="constant",
-            constant_values=0,
+        offset_mask = (positions >= (offset + prefix_len)).astype(mx.float32)
+        repeated_prefix_count = repeated_prefix_count + (
+            prefix_match_for_offset(offset) * offset_mask
         )
-        candidate_tokens = mx.pad(
-            labels[:, :-offset],
-            [(0, 0), (offset, 0)],
-            mode="constant",
-            constant_values=0,
-        )
-        offset_mask = (positions >= (offset + 1)).astype(mx.float32)
-        match_mask = (context_prev == prev_tokens).astype(mx.float32)
+
+    loop_mask = (repeated_prefix_count >= min_repeats).astype(mx.float32)
+    for offset in range(1, max_offset + 1):
+        offset_mask = (positions >= (offset + prefix_len)).astype(mx.float32)
+        match_mask = prefix_match_for_offset(offset)
+        candidate_tokens = shifted_tokens(offset)
         non_target_mask = (candidate_tokens != labels).astype(mx.float32)
-        valid_mask = effective_mask * position_mask * offset_mask * match_mask * non_target_mask
+        valid_mask = (
+            effective_mask
+            * position_mask
+            * offset_mask
+            * loop_mask
+            * match_mask
+            * non_target_mask
+        )
         candidate_probs = mx.take_along_axis(
             probs,
             mx.expand_dims(candidate_tokens, axis=-1),
@@ -2258,6 +2286,19 @@ def _execute_training(
                 plan,
                 config_fingerprint,
             )
+            resume_info_for_coverage: CheckpointResumeInfo | None = None
+            coverage_resume_requested = plan.args.adapter_path is not None
+            if plan.args.adapter_path is not None:
+                coverage_resume_requested, resume_info_for_coverage = _coverage_resume_request(
+                    plan.args.adapter_path,
+                    run_id,
+                )
+                if not coverage_resume_requested and resume_info_for_coverage is not None:
+                    plan.warnings.append(
+                        "Strict coverage warm-start: "
+                        f"resume adapter belongs to run_id={resume_info_for_coverage.run_id}; "
+                        f"initializing coverage for current run_id={run_id} at global_step=0."
+                    )
             if len(accepted_config_fingerprints) > 1:
                 plan.warnings.append(
                     "Strict coverage accepts this resume as a LoRA capacity upgrade: "
@@ -2275,7 +2316,7 @@ def _execute_training(
                 config_fingerprint=config_fingerprint,
                 total_examples=len(dataset),
                 target_steps=configured_iters,
-                resume_requested=plan.args.adapter_path is not None,
+                resume_requested=coverage_resume_requested,
                 accepted_config_fingerprints=accepted_config_fingerprints,
             )
             _acquire_run_lock(coverage_tracker.lock_path, run_id)
@@ -2283,7 +2324,9 @@ def _execute_training(
             _write_run_metadata(tracker=coverage_tracker, plan=plan, config=config)
 
             if plan.args.adapter_path:
-                resume_info = _read_checkpoint_resume_info(Path(plan.args.adapter_path))
+                resume_info = resume_info_for_coverage
+                if resume_info is None:
+                    resume_info = _read_checkpoint_resume_info(Path(plan.args.adapter_path))
                 if resume_info is not None:
                     same_run_resume = resume_info.run_id == run_id
                     if same_run_resume:

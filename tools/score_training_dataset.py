@@ -21,6 +21,11 @@ DESCRIPTION_RE = re.compile(
     r"(?P<description>.*?)\n\nOutput constraints:",
     flags=re.DOTALL,
 )
+BODY_ONLY_DESCRIPTION_RE = re.compile(
+    r"Generate only the TikZ environment body according to the following requirements:\n"
+    r"(?P<description>.*?)\n\nOutput constraints:",
+    flags=re.DOTALL,
+)
 
 
 @dataclass(slots=True)
@@ -61,9 +66,10 @@ def _extract_description(record: dict) -> str:
 
     messages = record.get("messages", [])
     user_text = next((_extract_text(msg) for msg in messages if msg.get("role") == "user"), "")
-    match = DESCRIPTION_RE.search(user_text)
-    if match:
-        return match.group("description").strip()
+    for pattern in (BODY_ONLY_DESCRIPTION_RE, DESCRIPTION_RE):
+        match = pattern.search(user_text)
+        if match:
+            return match.group("description").strip()
     return user_text.strip()
 
 

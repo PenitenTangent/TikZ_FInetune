@@ -205,8 +205,8 @@ def train(
         return lvalue, toks, grad, grad_norm, clip_scale, clipped, did_update
 
     model.train()
-    losses = 0
-    n_tokens = 0
+    losses = mx.array(0.0)
+    n_tokens = mx.array(0.0)
     steps = 0
     update_steps = 0
     trained_tokens = 0
@@ -216,8 +216,11 @@ def train(
     clip_scales = mx.array(0.0)
     clipped_steps = mx.array(0.0)
     probe_fail_count = 0
-    last_probe_pass_checkpoint: Path | None = None
     adapter_path = Path(args.adapter_file)
+    last_probe_pass_alias = adapter_path.parent / "last_probe_pass_adapters.safetensors"
+    last_probe_pass_checkpoint: Path | None = (
+        last_probe_pass_alias if last_probe_pass_alias.exists() else None
+    )
     if rank == 0:
         adapter_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -422,7 +425,23 @@ def train(
                 flush=True,
             )
             passed, failures = run_collapse_probe(model, processor, build_generation_prompt)
-            if not passed:
+            if passed:
+                probe_fail_count = 0
+                if collapse_probe_save_checkpoint_on_pass:
+                    # Keep a stable root-level checkpoint for run_stage.sh recovery/resume.
+                    # sft_trainer.save_adapter may be wrapped by train.py; let that wrapper
+                    # write canonical metadata instead of replacing it here.
+                    last_probe_pass_checkpoint = last_probe_pass_alias
+                    sft_trainer.save_adapter(model, last_probe_pass_checkpoint)
+                    if callable(on_collapse_probe_pass):
+                        on_collapse_probe_pass(str(last_probe_pass_checkpoint), int(global_it))
+                    print(
+                        f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed. Updated {last_probe_pass_checkpoint}.{sft_trainer.Colors.ENDC}",
+                        flush=True,
+                    )
+                else:
+                    print(f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed.{sft_trainer.Colors.ENDC}")
+            else:
                 probe_fail_count += 1
                 print(
                     f"{sft_trainer.Colors.FAIL}Collapse probe failed ({probe_fail_count}/{collapse_probe_max_failures}).{sft_trainer.Colors.ENDC}",
@@ -439,12 +458,12 @@ def train(
                     "max_failures": int(collapse_probe_max_failures),
                     "failures": failures,
                     "last_probe_pass_checkpoint": str(last_probe_pass_checkpoint) if last_probe_pass_checkpoint else None,
-                    "last_probe_pass_alias": str(adapter_path.parent / "named_checkpoints" / "last_probe_pass.safetensors"),
+                    "last_probe_pass_alias": str(last_probe_pass_alias),
                     "suggested_next": {
                         "resume_from": (
-                            str(adapter_path.parent / "named_checkpoints" / "last_probe_pass.safetensors")
-                            if (adapter_path.parent / "named_checkpoints" / "last_probe_pass.safetensors").exists()
-                            else (str(last_probe_pass_checkpoint) if last_probe_pass_checkpoint else None)
+                            str(last_probe_pass_checkpoint)
+                            if last_probe_pass_checkpoint is not None
+                            else None
                         ),
                         "tighten_grad_clip_factor": 0.5,
                         "halve_learning_rate_factor": 0.5,
@@ -462,25 +481,10 @@ def train(
                     )
                     if last_probe_pass_checkpoint is not None:
                         print(
-                            f"Resume from: {adapter_path.parent / 'named_checkpoints' / 'last_probe_pass.safetensors'}",
+                            f"Resume from: {last_probe_pass_checkpoint}",
                             flush=True,
                         )
                     sys.exit(2)
-            else:
-                probe_fail_count = 0
-                if collapse_probe_save_checkpoint_on_pass:
-                    probe_checkpoint = adapter_path.parent / f"{global_it:07d}_adapters.safetensors"
-                    if not probe_checkpoint.exists():
-                        sft_trainer.save_adapter(model, probe_checkpoint)
-                    last_probe_pass_checkpoint = probe_checkpoint
-                    if callable(on_collapse_probe_pass):
-                        on_collapse_probe_pass(str(probe_checkpoint), int(global_it))
-                    print(
-                        f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed. Checkpoint: {probe_checkpoint}{sft_trainer.Colors.ENDC}",
-                        flush=True,
-                    )
-                else:
-                    print(f"{sft_trainer.Colors.OKGREEN}✓ Collapse probe passed.{sft_trainer.Colors.ENDC}")
 
     if rank == 0:
         adapter_path.parent.mkdir(parents=True, exist_ok=True)

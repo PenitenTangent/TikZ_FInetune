@@ -207,6 +207,19 @@ def test_clean_adapter_config_uses_plain_ce_and_staged_lr() -> None:
     assert config.training.checkpoint_pin_iterations == (50_000, 100_000, 150_000)
 
 
+def test_curriculum_stage0_uses_current_stable_params_without_unlikelihood() -> None:
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "curriculum_stage0.yaml")
+
+    assert config.training.learning_rate == pytest.approx(1.0e-6)
+    assert config.training.lora_rank == 16
+    assert config.training.lora_alpha == 32
+    assert config.training.lora_num_layers == 42
+    assert config.training.lora_dropout == pytest.approx(0.08)
+    assert config.model.max_context_tokens == 768
+    assert config.training.repetition_unlikelihood_enabled is False
+    assert config.training.repetition_unlikelihood_weight == pytest.approx(0.0)
+
+
 def test_plan_training_threads_resume_adapter_into_namespace() -> None:
     config = load_config(CONFIG_PATH)
     resume_path = Path("runs/resume_adapter.safetensors").resolve()
@@ -379,12 +392,20 @@ def test_curriculum_stage_configs_use_lora_num_layers_28_and_strict_coverage() -
         if not path.exists():
             continue
         cfg = load_config(path)
-        assert cfg.training.lora_num_layers == 28
+        assert cfg.training.lora_num_layers >= 28
         assert cfg.training.coverage.enabled is True
         assert cfg.training.repetition_unlikelihood_enabled is True
-        assert cfg.training.repetition_unlikelihood_weight == pytest.approx(0.05)
+        assert 0.01 <= cfg.training.repetition_unlikelihood_weight <= 0.10
         assert cfg.training.repetition_unlikelihood_window == 64
         assert cfg.training.repetition_unlikelihood_min_context == 16
+
+
+def test_curriculum_stage2_switches_to_1024_after_70_percent() -> None:
+    cfg = load_config(Path(__file__).resolve().parents[1] / "configs" / "curriculum_stage2.yaml")
+
+    assert cfg.model.max_context_tokens == 1024
+    assert cfg.training.max_seq_length_schedule == ((0.0, 768), (0.7, 1024))
+    assert cfg.training.repetition_unlikelihood_weight == pytest.approx(0.02)
 
 
 def test_strict_coverage_rejects_filename_resume_offset() -> None:
@@ -833,24 +854,26 @@ def test_repetition_unlikelihood_penalizes_recent_non_target_probability() -> No
     _skip_if_mlx_unavailable()
     import mlx.core as mx
 
-    logits_clean = mx.zeros((1, 5, 8), dtype=mx.float32)
-    logits_repetitive = mx.array(np.zeros((1, 5, 8), dtype=np.float32))
-    logits_repetitive = logits_repetitive.at[0, 4, 2].add(8.0)
-    labels = mx.array([[1, 2, 3, 2, 4]], dtype=mx.int32)
-    mask = mx.ones((1, 5), dtype=mx.float32)
+    logits_clean = mx.zeros((1, 12, 8), dtype=mx.float32)
+    logits_repetitive = mx.array(np.zeros((1, 12, 8), dtype=np.float32))
+    # Prefix [1, 2, 3] has already occurred twice. At the final position,
+    # token 4 would continue a repeated 4-gram loop, while gold token 6 breaks it.
+    logits_repetitive = logits_repetitive.at[0, 11, 4].add(8.0)
+    labels = mx.array([[1, 2, 3, 4, 1, 2, 3, 5, 1, 2, 3, 6]], dtype=mx.int32)
+    mask = mx.ones((1, 12), dtype=mx.float32)
 
     clean = _repetition_unlikelihood_loss(
         logits=logits_clean,
         labels=labels,
         effective_mask=mask,
-        window=4,
+        window=12,
         min_context=0,
     )
     repetitive = _repetition_unlikelihood_loss(
         logits=logits_repetitive,
         labels=labels,
         effective_mask=mask,
-        window=4,
+        window=12,
         min_context=0,
     )
 
@@ -866,6 +889,27 @@ def test_repetition_unlikelihood_excludes_current_gold_repetition() -> None:
     logits = logits.at[0, 3, 2].add(8.0)
     labels = mx.array([[2, 2, 2, 2]], dtype=mx.int32)
     mask = mx.ones((1, 4), dtype=mx.float32)
+
+    loss = _repetition_unlikelihood_loss(
+        logits=logits,
+        labels=labels,
+        effective_mask=mask,
+        window=4,
+        min_context=0,
+    )
+
+    mx.eval(loss)
+    assert loss.item() < 0.01
+
+
+def test_repetition_unlikelihood_ignores_non_loop_repetition() -> None:
+    _skip_if_mlx_unavailable()
+    import mlx.core as mx
+
+    logits = mx.array(np.zeros((1, 6, 8), dtype=np.float32))
+    logits = logits.at[0, 5, 2].add(8.0)
+    labels = mx.array([[1, 2, 3, 2, 4, 5]], dtype=mx.int32)
+    mask = mx.ones((1, 6), dtype=mx.float32)
 
     loss = _repetition_unlikelihood_loss(
         logits=logits,
@@ -1048,6 +1092,43 @@ def test_read_checkpoint_iteration_falls_back_to_numeric_checkpoint_name(tmp_pat
     assert info is not None
     assert info.global_step == 2560
     assert info.run_id is None
+
+
+def test_coverage_resume_request_treats_different_run_as_warm_start(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "last_probe_pass_adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+    checkpoint_metadata_path(checkpoint).write_text(
+        json.dumps({"global_step": 246, "run_id": "curriculum_stage0"}),
+        encoding="utf-8",
+    )
+
+    resume_requested, info = train_module._coverage_resume_request(
+        checkpoint,
+        "curriculum_stage1",
+    )
+
+    assert resume_requested is False
+    assert info is not None
+    assert info.run_id == "curriculum_stage0"
+    assert info.global_step == 246
+
+
+def test_coverage_resume_request_keeps_same_run_as_resume(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "last_probe_pass_adapters.safetensors"
+    checkpoint.write_bytes(b"weights")
+    checkpoint_metadata_path(checkpoint).write_text(
+        json.dumps({"global_step": 512, "run_id": "curriculum_stage1"}),
+        encoding="utf-8",
+    )
+
+    resume_requested, info = train_module._coverage_resume_request(
+        checkpoint,
+        "curriculum_stage1",
+    )
+
+    assert resume_requested is True
+    assert info is not None
+    assert info.global_step == 512
 
 
 def test_materialized_numeric_resume_checkpoint_records_current_run_id(

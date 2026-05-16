@@ -1,5 +1,4 @@
 from tikz_mlx.prompting import (
-    CANONICAL_TIKZ_DOCUMENT_TEMPLATE,
     build_compile_repair_prompt,
     build_generation_prompt,
     build_visual_repair_prompt,
@@ -24,21 +23,10 @@ def _compile_summary() -> CompileSummary:
 def test_build_generation_prompt_includes_contract_and_output_constraints() -> None:
     prompt = build_generation_prompt(" Draw a right triangle with vertices A, B, and C. ")
 
-    assert "Generate a complete LaTeX document" in prompt
-    assert "Continue from the markdown fence opened below" in prompt
+    assert "Generate only the TikZ environment body" in prompt
     assert "Draw a right triangle with vertices A, B, and C." in prompt
-    assert "--- Starting Preamble ---" in prompt
-    assert "\\documentclass[tikz]{standalone}" in prompt
-
-
-def test_build_generation_prompt_uses_supplied_preamble_once() -> None:
-    preamble = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}"
-
-    prompt = build_generation_prompt("Draw a square.", preamble=preamble)
-
-    assert prompt.count("--- Starting Preamble ---") == 1
-    assert prompt.count("\\documentclass") == 1
-    assert "\\documentclass{article}" in prompt
+    assert "Do not output a LaTeX preamble" in prompt
+    assert "\\documentclass[tikz]{standalone}" not in prompt
     assert prompt.rstrip().endswith("```latex")
 
 

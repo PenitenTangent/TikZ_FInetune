@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from tikz_mlx.prompting import build_generation_prompt
 from tikz_mlx.recovery import (
     build_eval_manifest,
     evaluate_ab_result_gate,
@@ -29,13 +30,7 @@ def _record(sample_id: str, mode: str) -> dict:
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "Draw.\n\n--- Starting Preamble ---\n"
-                            "\\documentclass[tikz]{standalone}\n"
-                            "\\usepackage{tikz}\n"
-                            "\\begin{document}\n"
-                            "```latex"
-                        ),
+                        "text": build_generation_prompt("Draw."),
                     }
                 ],
             },
