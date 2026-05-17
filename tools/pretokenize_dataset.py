@@ -203,6 +203,36 @@ def main():
             kept_sample_ids.append(sample_id)
             token_lengths.append(len(token_ids))
 
+    # Ensure divisibility by gradient_accumulation_steps if coverage is enabled
+    grad_accum = 1
+    coverage_enabled = False
+    if args.config:
+        import yaml
+        with open(args.config, encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh)
+        grad_accum = int(cfg.get("memory", {}).get("gradient_accumulation_steps", 1))
+        coverage_enabled = bool(cfg.get("training", {}).get("coverage", {}).get("enabled", False))
+
+    if coverage_enabled and grad_accum > 1:
+        total_kept = len(tokenized_samples)
+        excess = total_kept % grad_accum
+        if excess > 0:
+            target_count = total_kept - excess
+            print(f"[coverage] Dataset size {total_kept} is not divisible by gradient_accumulation_steps {grad_accum}.")
+            print(f"[coverage] Slicing dataset to {target_count} to satisfy strict coverage requirements (dropped {excess} rows).")
+            tokenized_samples = tokenized_samples[:target_count]
+            kept_record_lines = kept_record_lines[:target_count]
+            kept_sample_ids = kept_sample_ids[:target_count]
+            token_lengths = token_lengths[:target_count]
+            
+            # Re-index the remaining records to ensure example_index remains perfectly contiguous (0 to target_count-1)
+            new_record_lines = []
+            for i, line in enumerate(kept_record_lines):
+                rec = json.loads(line)
+                assign_example_index(rec, i)
+                new_record_lines.append(json.dumps(rec, ensure_ascii=False, sort_keys=True))
+            kept_record_lines = new_record_lines
+
     skipped = total_lines - len(tokenized_samples)
     print(f"\n--- Tokenization Report ---")
     print(f"Total processed: {total_lines}")

@@ -577,20 +577,33 @@ class CollapseProbeConfig:
     interval_steps: int
     max_failures: int
     save_checkpoint_on_pass: bool
+    start_step: int
+    probe_at_end_only: bool
+    allowed_failures: int
 
     @classmethod
     def from_mapping(cls, mapping: dict[str, Any]) -> "CollapseProbeConfig":
         interval_steps = int(mapping.get("interval_steps", 500))
         max_failures = int(mapping.get("max_failures", 1))
+        start_step = int(mapping.get("start_step", 0))
+        probe_at_end_only = bool(mapping.get("probe_at_end_only", False))
+        allowed_failures = int(mapping.get("allowed_failures", 0))
         if interval_steps <= 0:
             raise ValueError("training.collapse_probe.interval_steps must be positive.")
         if max_failures <= 0:
             raise ValueError("training.collapse_probe.max_failures must be positive.")
+        if start_step < 0:
+            raise ValueError("training.collapse_probe.start_step must be non-negative.")
+        if allowed_failures < 0:
+            raise ValueError("training.collapse_probe.allowed_failures must be non-negative.")
         return cls(
             enabled=bool(mapping.get("enabled", True)),
             interval_steps=interval_steps,
             max_failures=max_failures,
             save_checkpoint_on_pass=bool(mapping.get("save_checkpoint_on_pass", True)),
+            start_step=start_step,
+            probe_at_end_only=probe_at_end_only,
+            allowed_failures=allowed_failures,
         )
 
 

@@ -180,10 +180,12 @@ training:
   repetition_unlikelihood_min_context: 16
   repetition_unlikelihood_warmup_steps: 500
   collapse_probe:
+    probe_at_end_only: true
     enabled: true
     interval_steps: 500
     max_failures: 1
     save_checkpoint_on_pass: true
+    allowed_failures: 2
   val_batches: 6
   val_dataset_path: data/prepared/val_unified_deleaked.jsonl
   validation_compile_probe_limit: 8

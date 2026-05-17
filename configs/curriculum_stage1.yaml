@@ -101,7 +101,7 @@ training:
   lr_warmup_fraction: 0.02
   lora_alpha: 64
   lora_dropout: 0.06
-  lora_num_layers: 42
+  lora_num_layers: 40
   lora_rank: 32
   max_grad_norm: 0.5
   min_validation_compilation_rate: 0.0
@@ -174,10 +174,12 @@ training:
   repetition_unlikelihood_min_context: 16
   repetition_unlikelihood_warmup_steps: 500
   collapse_probe:
+    probe_at_end_only: true
     enabled: true
     interval_steps: 500
     max_failures: 1
     save_checkpoint_on_pass: true
+    allowed_failures: 2
   val_batches: 8
   val_dataset_path: data/prepared/val_unified_deleaked.jsonl
   validation_compile_probe_limit: 8

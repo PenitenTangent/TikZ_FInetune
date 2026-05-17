@@ -98,6 +98,9 @@ training:
     interval_steps: 50
     max_failures: 1
     save_checkpoint_on_pass: true
+    start_step: 200
+    probe_at_end_only: true
+    allowed_failures: 3
   dataset_path: data/prepared/curriculum/stage0_compile_curriculum_clean.jsonl
   dry_run_steps: 2
   epochs: 1

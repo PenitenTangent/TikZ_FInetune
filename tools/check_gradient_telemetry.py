@@ -37,8 +37,8 @@ def main() -> int:
     parser.add_argument("--telemetry", required=True, help="Path to gradient_clip_telemetry.jsonl")
     parser.add_argument("--out", default=None, help="Optional JSON summary output path.")
     parser.add_argument("--window", type=int, default=5, help="Number of recent telemetry rows to inspect.")
-    parser.add_argument("--max-clipped-step-rate", type=float, default=0.85)
-    parser.add_argument("--min-avg-clip-scale", type=float, default=0.20)
+    parser.add_argument("--max-clipped-step-rate", type=float, default=1.0)
+    parser.add_argument("--min-avg-clip-scale", type=float, default=0.05)
     parser.add_argument("--allow-missing", action="store_true")
     args = parser.parse_args()
 

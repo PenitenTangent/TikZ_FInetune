@@ -171,7 +171,7 @@ def _write_checkpoint_iteration(adapter_dir: Path, iteration: int, *, run_id: st
 
 def optimizer_state_sidecar_path(checkpoint_path: str | Path) -> Path:
     path = Path(checkpoint_path).expanduser().resolve()
-    return path.with_name(f"{path.name}.optimizer_state.npz")
+    return path.with_name(f"{path.name}.optimizer_state.safetensors")
 
 
 def _optimizer_state_metadata_path(state_path: Path) -> Path:
@@ -197,7 +197,7 @@ def save_optimizer_state_sidecar(optimizer: Any, checkpoint_path: str | Path) ->
         array_keys.append(key)
     if not arrays:
         return None
-    mx.savez(str(state_path), **arrays)
+    mx.save_safetensors(str(state_path), arrays)
     _optimizer_state_metadata_path(state_path).write_text(
         json.dumps(
             {
@@ -3534,6 +3534,9 @@ def _execute_training(
         training_args._tikz_collapse_probe_enabled = bool(config.training.collapse_probe.enabled)
         training_args._tikz_collapse_probe_interval_steps = int(config.training.collapse_probe.interval_steps)
         training_args._tikz_collapse_probe_max_failures = int(config.training.collapse_probe.max_failures)
+        training_args._tikz_collapse_probe_start_step = int(config.training.collapse_probe.start_step)
+        training_args._tikz_collapse_probe_probe_at_end_only = bool(config.training.collapse_probe.probe_at_end_only)
+        training_args._tikz_collapse_probe_allowed_failures = int(config.training.collapse_probe.allowed_failures)
         training_args._tikz_collapse_probe_save_checkpoint_on_pass = bool(
             config.training.collapse_probe.save_checkpoint_on_pass
         )

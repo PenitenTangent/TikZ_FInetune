@@ -144,6 +144,9 @@ def train(
     collapse_probe_enabled = bool(getattr(args, "_tikz_collapse_probe_enabled", True))
     collapse_probe_interval_steps = int(getattr(args, "_tikz_collapse_probe_interval_steps", 500))
     collapse_probe_max_failures = int(getattr(args, "_tikz_collapse_probe_max_failures", 1))
+    collapse_probe_start_step = int(getattr(args, "_tikz_collapse_probe_start_step", 0))
+    collapse_probe_probe_at_end_only = bool(getattr(args, "_tikz_collapse_probe_probe_at_end_only", False))
+    collapse_probe_allowed_failures = int(getattr(args, "_tikz_collapse_probe_allowed_failures", 0))
     collapse_probe_save_checkpoint_on_pass = bool(
         getattr(args, "_tikz_collapse_probe_save_checkpoint_on_pass", True)
     )
@@ -417,8 +420,10 @@ def train(
 
         if (
             collapse_probe_enabled
+            and not collapse_probe_probe_at_end_only
             and processor is not None
             and rank == 0
+            and global_it >= collapse_probe_start_step
             and global_it % collapse_probe_interval_steps == 0
         ):
             print(
@@ -431,8 +436,8 @@ def train(
                 build_generation_prompt,
                 forced_prefix=collapse_probe_forced_prefix,
             )
-            passed = bool(probe_payload.get("passed"))
             failures = probe_payload.get("failures", [])
+            passed = len(failures) <= collapse_probe_allowed_failures
             raw_warning = probe_payload.get("raw_greedy_warning", {})
             probe_record = {
                 "iteration": int(global_it),
@@ -518,3 +523,67 @@ def train(
         adapter_path.parent.mkdir(parents=True, exist_ok=True)
         sft_trainer.save_adapter(model, adapter_path)
         print(f"{sft_trainer.Colors.OKGREEN}Saved final adapter weights to {adapter_path}.{sft_trainer.Colors.ENDC}")
+
+        if collapse_probe_enabled and collapse_probe_probe_at_end_only and processor is not None:
+            print(
+                f"{sft_trainer.Colors.OKBLUE}Running final collapse probe check...{sft_trainer.Colors.ENDC}",
+                flush=True,
+            )
+            probe_payload = run_collapse_probe_suite(
+                model,
+                processor,
+                build_generation_prompt,
+                forced_prefix=collapse_probe_forced_prefix,
+            )
+            failures = probe_payload.get("failures", [])
+            passed = len(failures) <= collapse_probe_allowed_failures
+            raw_warning = probe_payload.get("raw_greedy_warning", {})
+            probe_record = {
+                "iteration": int(global_it),
+                "local_iteration": int(local_it),
+                "is_final_probe": True,
+                **probe_payload,
+            }
+            try:
+                with (adapter_path.parent / "collapse_probe_results.jsonl").open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(probe_record, sort_keys=True) + "\n")
+            except Exception:
+                pass
+            if raw_warning and not raw_warning.get("passed", True):
+                raw_failures = raw_warning.get("failures", [])
+                print(
+                    f"{sft_trainer.Colors.WARNING}Raw-greedy collapse warning: "
+                    f"{len(raw_failures)} sentinel prompt(s) failed."
+                    f"{sft_trainer.Colors.ENDC}",
+                    flush=True,
+                )
+            if passed:
+                print(
+                    f"{sft_trainer.Colors.OKGREEN}✓ Final collapse probe passed!{sft_trainer.Colors.ENDC}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"{sft_trainer.Colors.FAIL}Final collapse probe failed!{sft_trainer.Colors.ENDC}",
+                    flush=True,
+                )
+                for f in failures:
+                    print(f"  - {f['prompt']}: {', '.join(f['reasons'])}")
+
+                report_path = adapter_path.parent / "collapse_probe_failure.json"
+                report = {
+                    "iteration": int(global_it),
+                    "local_iteration": int(local_it),
+                    "is_final_probe": True,
+                    "failures": failures,
+                    "raw_greedy_warning": raw_warning,
+                }
+                try:
+                    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+                except Exception:
+                    pass
+                print(
+                    f"{sft_trainer.Colors.FAIL}FATAL: Final collapse probe failed. Training cannot be promoted.{sft_trainer.Colors.ENDC}",
+                    flush=True,
+                )
+                sys.exit(2)

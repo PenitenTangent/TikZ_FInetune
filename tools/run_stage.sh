@@ -208,6 +208,7 @@ STAGE_TRAIN_JSONL=""
 # Try to find the original raw/source training file for this stage.
 # Typically data/prepared/curriculum/train_stageN.jsonl (raw)
 for candidate in \
+    "data/prepared/curriculum/stage${STAGE_NUM}_compile_curriculum.jsonl" \
     "data/prepared/curriculum/train_stage${STAGE_NUM}.jsonl" \
     "data/prepared/curriculum/synthetic_primitives.jsonl" \
     "data/prepared/train_stage${STAGE_NUM}.jsonl" \
