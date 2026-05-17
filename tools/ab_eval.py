@@ -192,7 +192,10 @@ def _generate(
     }
     sig = inspect.signature(stream_generate).parameters
     if "repetition_penalty" in sig:
-        kwargs["repetition_penalty"] = 1.2
+        kwargs["repetition_penalty"] = cfg.inference.initial_decoding.repetition_penalty or 1.3
+    no_repeat_ngram_size = getattr(cfg.inference.initial_decoding, "no_repeat_ngram_size", None)
+    if no_repeat_ngram_size is not None and "no_repeat_ngram_size" in sig:
+        kwargs["no_repeat_ngram_size"] = no_repeat_ngram_size
 
     gen = stream_generate(**kwargs)
     result = ""
@@ -237,6 +240,7 @@ def _decoding_config_to_dict(decoding: Any) -> dict[str, Any]:
         "top_k": decoding.top_k,
         "min_p": decoding.min_p,
         "repetition_penalty": decoding.repetition_penalty,
+        "no_repeat_ngram_size": getattr(decoding, "no_repeat_ngram_size", None),
     }
 
 

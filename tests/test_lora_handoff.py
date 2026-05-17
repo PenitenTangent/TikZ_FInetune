@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 
 from tikz_mlx.adapter_config_io import (
+    adapter_lora_input_dim_rewrites,
     infer_adapter_lora_rank,
     materialize_lora_handoff_adapter,
+    validate_resumed_adapter_model_and_shape,
 )
 
 torch = pytest.importorskip("torch")
@@ -13,16 +15,16 @@ pytest.importorskip("safetensors.torch")
 from safetensors.torch import load_file, save_file  # noqa: E402
 
 
-def _write_adapter(path: Path, *, rank: int, alpha: int, dropout: float) -> Path:
+def _write_adapter(path: Path, *, rank: int, alpha: int, dropout: float, input_dim: int = 4) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     tensors = {
         "language_model.model.layers.0.self_attn.q_proj.A": torch.arange(
-            4 * rank, dtype=torch.float32
-        ).reshape(4, rank),
+            input_dim * rank, dtype=torch.float32
+        ).reshape(input_dim, rank),
         "language_model.model.layers.0.self_attn.q_proj.B": torch.arange(
             rank * 3, dtype=torch.float32
         ).reshape(rank, 3),
-        "language_model.model.layers.0.norm.weight": torch.ones(4, dtype=torch.float32),
+        "language_model.model.layers.0.norm.weight": torch.ones(input_dim, dtype=torch.float32),
     }
     save_file(tensors, str(path / "adapters.safetensors"))
     (path / "adapter_config.json").write_text(
@@ -110,3 +112,53 @@ def test_materialize_lora_handoff_rejects_rank_shrink(tmp_path: Path) -> None:
             target_alpha=32,
             target_dropout=0.03,
         )
+
+
+def test_materialize_lora_handoff_rewrites_known_gemma_input_dim(tmp_path: Path) -> None:
+    source = _write_adapter(tmp_path / "source", rank=16, alpha=32, dropout=0.03, input_dim=2400)
+    target = tmp_path / "target"
+
+    rewrites = adapter_lora_input_dim_rewrites(
+        source,
+        expected_model_id="mlx-community/gemma-4-e4b-it-6bit",
+    )
+    result = materialize_lora_handoff_adapter(
+        source_adapter_path=source,
+        target_dir=target,
+        target_rank=16,
+        target_alpha=32,
+        target_dropout=0.03,
+        input_dim_rewrites=rewrites,
+    )
+
+    old = load_file(str(source / "adapters.safetensors"))
+    new = load_file(str(target / "adapters.safetensors"))
+    old_a = old["language_model.model.layers.0.self_attn.q_proj.A"]
+    new_a = new["language_model.model.layers.0.self_attn.q_proj.A"]
+
+    assert rewrites == {2400: 2560}
+    assert result["input_dim_rewritten"] is True
+    assert tuple(new_a.shape) == (2560, 16)
+    torch.testing.assert_close(new_a[:2400, :], old_a)
+    torch.testing.assert_close(new_a[2400:, :], torch.zeros_like(new_a[2400:, :]))
+
+
+def test_validate_resumed_adapter_allows_known_gemma_input_dim_rewrite(tmp_path: Path) -> None:
+    source = _write_adapter(tmp_path / "source", rank=16, alpha=32, dropout=0.03, input_dim=2400)
+
+    validate_resumed_adapter_model_and_shape(
+        adapter_path=source,
+        expected_model_id="mlx-community/gemma-4-e4b-it-6bit",
+    )
+
+
+def test_mlx_vlm_lora_patch_uses_quantized_scale_shape_for_input_dim() -> None:
+    nn = pytest.importorskip("mlx.nn")
+    pytest.importorskip("mlx_vlm.trainer.lora")
+    from mlx_vlm.trainer.lora import LoRaLayer
+
+    linear = nn.QuantizedLinear(2560, 2048, bias=False, group_size=64, bits=6)
+    layer = LoRaLayer(linear, rank=16, alpha=32, dropout=0.0)
+
+    assert tuple(layer.A.shape) == (2560, 16)
+    assert tuple(layer.B.shape) == (16, 2048)

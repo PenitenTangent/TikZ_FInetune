@@ -18,9 +18,11 @@ from typing import Any, Sequence
 import numpy as np
 
 from .adapter_config_io import (
+    adapter_lora_input_dim_rewrites,
     load_source_lora_hyperparams,
     materialize_lora_handoff_adapter,
     validate_resumed_adapter_lora_hyperparams,
+    validate_resumed_adapter_model_and_shape,
 )
 from .checkpointing import (
     CheckpointContext,
@@ -77,6 +79,35 @@ class CheckpointResumeInfo:
     source: str
 
 
+def _checkpoint_metadata_candidates(adapter_path: Path) -> list[Path]:
+    resolved = adapter_path.expanduser().resolve()
+    weights_path = resolve_adapter_weights_path(resolved)
+    metadata_candidates: list[Path] = []
+    if resolved.is_dir():
+        metadata_candidates.append(resolved / CHECKPOINT_METADATA_FILE)
+    else:
+        metadata_candidates.append(checkpoint_metadata_path(resolved))
+    if weights_path is not None:
+        metadata_candidates.append(checkpoint_metadata_path(weights_path))
+        metadata_candidates.append(weights_path.parent / CHECKPOINT_METADATA_FILE)
+    return metadata_candidates
+
+
+def _read_checkpoint_metadata_payload(adapter_path: Path) -> tuple[dict[str, Any], Path] | None:
+    seen: set[Path] = set()
+    for metadata_path in _checkpoint_metadata_candidates(adapter_path):
+        if metadata_path in seen or not metadata_path.exists():
+            continue
+        seen.add(metadata_path)
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload, metadata_path
+    return None
+
+
 def _checkpoint_step_from_payload(payload: dict[str, Any]) -> int | None:
     value = payload.get("global_step", payload.get("iteration"))
     if value is None:
@@ -90,36 +121,20 @@ def _checkpoint_step_from_payload(payload: dict[str, Any]) -> int | None:
 
 def _read_checkpoint_resume_info(adapter_path: Path) -> CheckpointResumeInfo | None:
     """Read the global training step represented by an adapter checkpoint."""
+    metadata_result = _read_checkpoint_metadata_payload(adapter_path)
+    if metadata_result is not None:
+        payload, metadata_path = metadata_result
+        step = _checkpoint_step_from_payload(payload)
+        if step is not None:
+            run_id = payload.get("run_id")
+            return CheckpointResumeInfo(
+                global_step=step,
+                run_id=run_id if isinstance(run_id, str) and run_id.strip() else None,
+                source=str(metadata_path),
+            )
+
     resolved = adapter_path.expanduser().resolve()
     weights_path = resolve_adapter_weights_path(resolved)
-    metadata_candidates: list[Path] = []
-    if resolved.is_dir():
-        metadata_candidates.append(resolved / CHECKPOINT_METADATA_FILE)
-    else:
-        metadata_candidates.append(checkpoint_metadata_path(resolved))
-    if weights_path is not None:
-        metadata_candidates.append(checkpoint_metadata_path(weights_path))
-        metadata_candidates.append(weights_path.parent / CHECKPOINT_METADATA_FILE)
-
-    seen: set[Path] = set()
-    for metadata_path in metadata_candidates:
-        if metadata_path in seen or not metadata_path.exists():
-            continue
-        seen.add(metadata_path)
-        try:
-            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        step = _checkpoint_step_from_payload(payload)
-        if step is None:
-            continue
-        run_id = payload.get("run_id")
-        return CheckpointResumeInfo(
-            global_step=step,
-            run_id=run_id if isinstance(run_id, str) and run_id.strip() else None,
-            source=str(metadata_path),
-        )
-
     filename_step = extract_iteration_from_checkpoint_name(weights_path or resolved)
     if filename_step is None:
         return None
@@ -154,6 +169,178 @@ def _write_checkpoint_iteration(adapter_dir: Path, iteration: int, *, run_id: st
         pass  # Non-critical; silently skip if write fails
 
 
+def optimizer_state_sidecar_path(checkpoint_path: str | Path) -> Path:
+    path = Path(checkpoint_path).expanduser().resolve()
+    return path.with_name(f"{path.name}.optimizer_state.npz")
+
+
+def _optimizer_state_metadata_path(state_path: Path) -> Path:
+    return state_path.with_name(f"{state_path.name}.json")
+
+
+def save_optimizer_state_sidecar(optimizer: Any, checkpoint_path: str | Path) -> Path | None:
+    import mlx.utils as mx_utils
+
+    mx = import_mlx_core()
+    state_path = optimizer_state_sidecar_path(checkpoint_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    flat = mx_utils.tree_flatten(optimizer.state)
+    arrays: dict[str, Any] = {}
+    tree_paths: list[str] = []
+    array_keys: list[str] = []
+    for index, (tree_path, value) in enumerate(flat):
+        if not hasattr(value, "shape"):
+            continue
+        key = f"arr_{index:06d}"
+        arrays[key] = value
+        tree_paths.append(str(tree_path))
+        array_keys.append(key)
+    if not arrays:
+        return None
+    mx.savez(str(state_path), **arrays)
+    _optimizer_state_metadata_path(state_path).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "tree_paths": tree_paths,
+                "array_keys": array_keys,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return state_path
+
+
+def load_optimizer_state_sidecar(optimizer: Any, state_path: str | Path) -> None:
+    import mlx.utils as mx_utils
+
+    mx = import_mlx_core()
+    resolved = Path(state_path).expanduser().resolve()
+    metadata = json.loads(_optimizer_state_metadata_path(resolved).read_text(encoding="utf-8"))
+    loaded = mx.load(str(resolved))
+    optimizer.state = mx_utils.tree_unflatten(
+        [
+            (str(tree_path), loaded[str(array_key)])
+            for tree_path, array_key in zip(metadata["tree_paths"], metadata["array_keys"])
+        ]
+    )
+
+
+def _metadata_optimizer_state_path(payload: dict[str, Any], metadata_path: Path) -> Path | None:
+    raw = payload.get("optimizer_state")
+    if isinstance(raw, str) and raw:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = metadata_path.parent / path
+        return path.resolve()
+    source_raw = payload.get("source_checkpoint_path")
+    if isinstance(source_raw, str) and source_raw:
+        source_payload = _read_checkpoint_metadata_payload(Path(source_raw))
+        if source_payload is not None:
+            source_data, source_metadata_path = source_payload
+            return _metadata_optimizer_state_path(source_data, source_metadata_path)
+    return None
+
+
+def _metadata_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_restore_optimizer_state(
+    *,
+    optimizer: Any,
+    resume_adapter_path: str | Path | None,
+    run_id: str,
+    config_fingerprint: str | None,
+    dataset_snapshot_id: str | None,
+    model_id: str,
+    lora_rank: int,
+    lora_alpha: int,
+    lora_dropout: float,
+    lora_num_layers: int | None,
+) -> dict[str, Any]:
+    if resume_adapter_path in (None, ""):
+        return {
+            "restored": False,
+            "optimizer_state": None,
+            "optimizer_state_reset_reason": "fresh_start",
+        }
+    metadata_result = _read_checkpoint_metadata_payload(Path(resume_adapter_path))
+    if metadata_result is None:
+        return {
+            "restored": False,
+            "optimizer_state": None,
+            "optimizer_state_reset_reason": "missing_checkpoint_metadata",
+        }
+
+    payload, metadata_path = metadata_result
+    checks = {
+        "run_id": payload.get("run_id") == run_id,
+        "training_config_fingerprint": payload.get("training_config_fingerprint") == config_fingerprint,
+        "dataset_snapshot_id": payload.get("dataset_snapshot_id") == dataset_snapshot_id,
+    }
+    resolved = payload.get("resolved_training_config")
+    if isinstance(resolved, dict):
+        source_lora_num_layers = _metadata_int(resolved.get("lora_num_layers"))
+        source_lora_dropout = _metadata_float(resolved.get("lora_dropout"))
+        checks.update(
+            {
+                "model_id": resolved.get("model_id") == model_id,
+                "lora_rank": _metadata_int(resolved.get("lora_rank")) == int(lora_rank),
+                "lora_alpha": _metadata_int(resolved.get("lora_alpha")) == int(lora_alpha),
+                "lora_dropout": math.isclose(
+                    source_lora_dropout if source_lora_dropout is not None else -1.0,
+                    float(lora_dropout),
+                    rel_tol=1e-5,
+                    abs_tol=1e-8,
+                ),
+                "lora_num_layers": (
+                    source_lora_num_layers is None
+                    if lora_num_layers is None
+                    else source_lora_num_layers == int(lora_num_layers)
+                ),
+            }
+        )
+    else:
+        checks["resolved_training_config"] = False
+
+    if not all(checks.values()):
+        failed = sorted(key for key, passed in checks.items() if not passed)
+        return {
+            "restored": False,
+            "optimizer_state": None,
+            "optimizer_state_reset_reason": "stage_boundary_or_capacity_change",
+            "failed_optimizer_restore_checks": failed,
+            "checkpoint_metadata_path": str(metadata_path),
+        }
+
+    state_path = _metadata_optimizer_state_path(payload, metadata_path)
+    if state_path is None or not state_path.exists():
+        return {
+            "restored": False,
+            "optimizer_state": str(state_path) if state_path is not None else None,
+            "optimizer_state_reset_reason": "missing_optimizer_state",
+            "checkpoint_metadata_path": str(metadata_path),
+        }
+    load_optimizer_state_sidecar(optimizer, state_path)
+    return {
+        "restored": True,
+        "optimizer_state": str(state_path),
+        "optimizer_state_reset_reason": None,
+        "checkpoint_metadata_path": str(metadata_path),
+    }
 
 
 def _file_sha256(path: Path) -> str:
@@ -172,6 +359,69 @@ def _pack_dataset_sha256(*paths: Path) -> str:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _write_stage_learning_summary(
+    *,
+    output_path: Path,
+    telemetry_path: Path,
+    gradient_accumulation_steps: int,
+    warmup_steps: int,
+    target_optimizer_updates: int,
+    min_updates: int,
+    min_loss_delta: float,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    if telemetry_path.exists():
+        for line in telemetry_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and "train_loss" in payload:
+                rows.append(payload)
+
+    summary: dict[str, Any] = {
+        "telemetry_path": str(telemetry_path),
+        "report_count": len(rows),
+        "gradient_accumulation_steps": int(gradient_accumulation_steps),
+        "warmup_steps": int(warmup_steps),
+        "target_optimizer_updates": int(target_optimizer_updates),
+        "first_train_loss": None,
+        "last_train_loss": None,
+        "loss_delta": None,
+        "avg_grad_norm": None,
+        "avg_clipped_step_rate": None,
+        "optimizer_update_count": 0,
+        "final_learning_rate": None,
+        "learning_warning": None,
+    }
+    if rows:
+        first_loss = float(rows[0]["train_loss"])
+        last_loss = float(rows[-1]["train_loss"])
+        last_iteration = int(rows[-1].get("iteration", 0) or 0)
+        update_count = last_iteration // max(int(gradient_accumulation_steps), 1)
+        summary.update(
+            {
+                "first_train_loss": first_loss,
+                "last_train_loss": last_loss,
+                "loss_delta": first_loss - last_loss,
+                "avg_grad_norm": sum(float(row.get("avg_grad_norm", 0.0)) for row in rows) / len(rows),
+                "avg_clipped_step_rate": sum(float(row.get("clipped_step_rate", 0.0)) for row in rows) / len(rows),
+                "optimizer_update_count": update_count,
+                "final_learning_rate": float(rows[-1].get("learning_rate", 0.0)),
+            }
+        )
+        if update_count >= int(min_updates) and (first_loss - last_loss) < float(min_loss_delta):
+            summary["learning_warning"] = (
+                "Stage loss delta is below threshold: "
+                f"loss_delta={first_loss - last_loss:.6g}, required={float(min_loss_delta):.6g}"
+            )
+
+    output_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
 
 
 def _load_and_validate_pack_audit(
@@ -399,6 +649,26 @@ EXPECTED_LORA_TARGET_SUFFIXES = (
     "down_proj",
 )
 
+ALLOWED_LORA_TARGET_RE = re.compile(
+    r"(?:^|\.)layers\.(\d+)\."
+    r"(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)"
+    r"|mlp\.(?:gate_proj|up_proj|down_proj))$"
+)
+
+
+def is_allowed_lora_target_name(
+    name: str,
+    *,
+    cutoff: int,
+    total_layers: int,
+) -> bool:
+    match = ALLOWED_LORA_TARGET_RE.search(name)
+    if match is None:
+        return False
+
+    layer_idx = int(match.group(1))
+    return cutoff <= layer_idx < total_layers
+
 
 def _iter_named_modules_for_lora_audit(model: Any) -> list[tuple[str, Any]]:
     roots = []
@@ -494,6 +764,15 @@ def collect_lora_targets(
         layer_idx for layer_idx in layer_indices
         if expected_max_layer is not None and layer_idx > expected_max_layer
     ]
+    unexpected_targets = [
+        target
+        for target in sorted_targets
+        if not is_allowed_lora_target_name(
+            target,
+            cutoff=expected_min_layer or 0,
+            total_layers=(expected_max_layer + 1) if expected_max_layer is not None else 10**9,
+        )
+    ]
     missing_expected_layers: list[int] = []
     if expected_min_layer is not None and expected_max_layer is not None:
         missing_expected_layers = [
@@ -519,8 +798,38 @@ def collect_lora_targets(
         "observed_lora_layer_count": len(layer_indices),
         "unexpected_layer_indices_below_min": unexpected_layer_indices_below_min,
         "unexpected_layer_indices_above_max": unexpected_layer_indices_above_max,
+        "unexpected_targets": unexpected_targets,
         "missing_expected_layers": missing_expected_layers,
     }
+
+
+def collect_lora_shape_audit(model: Any) -> dict[str, Any]:
+    rows = []
+
+    for name, module in _iter_named_modules_for_lora_audit(model):
+        class_name = module.__class__.__name__
+        if "lora" not in class_name.lower():
+            continue
+
+        row: dict[str, Any] = {
+            "name": name,
+            "class": class_name,
+            "layer_index": extract_layer_index(name),
+        }
+
+        original_layer = getattr(module, "original_layer", None)
+        original_weight = getattr(original_layer, "weight", None)
+        if original_weight is not None and hasattr(original_weight, "shape"):
+            row["original_weight_shape"] = list(original_weight.shape)
+
+        for attr in ("A", "B", "lora_a", "lora_b", "lora_A", "lora_B"):
+            tensor = getattr(module, attr, None)
+            if tensor is not None and hasattr(tensor, "shape"):
+                row[f"{attr}_shape"] = list(tensor.shape)
+
+        rows.append(row)
+
+    return {"lora_shapes": rows}
 
 
 @dataclass(slots=True)
@@ -931,9 +1240,41 @@ def _capacity_upgrade_resume_fingerprints(
     return accepted
 
 
-def _resolved_training_config_snapshot(config: PipelineConfig, plan: TrainingPlan) -> dict[str, Any]:
+def _model_hidden_size(model: Any) -> int | None:
+    model_config = getattr(model, "config", None)
+    for attr in ("hidden_size", "text_config.hidden_size", "model_dim", "hidden_dim", "dim"):
+        current = model_config
+        for part in attr.split("."):
+            current = getattr(current, part, None)
+            if current is None:
+                break
+        if current is None:
+            continue
+        try:
+            value = int(current)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _model_type(model: Any) -> str | None:
+    model_config = getattr(model, "config", None)
+    value = getattr(model_config, "model_type", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _resolved_training_config_snapshot(
+    config: PipelineConfig,
+    plan: TrainingPlan,
+    *,
+    model: Any | None = None,
+) -> dict[str, Any]:
     return {
         "model_id": config.model.model_id,
+        "hidden_size": _model_hidden_size(model) if model is not None else None,
+        "model_type": _model_type(model) if model is not None else None,
         "max_context_tokens": config.model.max_context_tokens,
         "dataset_path": str(plan.dataset_path.resolve()),
         "learning_rate": plan.args.learning_rate,
@@ -941,6 +1282,7 @@ def _resolved_training_config_snapshot(config: PipelineConfig, plan: TrainingPla
         "lora_alpha": plan.args.lora_alpha,
         "lora_dropout": plan.args.lora_dropout,
         "lora_num_layers": plan.args.lora_num_layers,
+        "target_suffixes": list(EXPECTED_LORA_TARGET_SUFFIXES),
         "epochs": plan.args.epochs,
         "iters": plan.args.iters,
         "train_on_completions": plan.args.train_on_completions,
@@ -2263,14 +2605,18 @@ def _validate_lora_unwrap_and_optimizer_state(
     model: Any,
     optimizer: Any,
     cutoff: int,
+    total_layers: int,
 ) -> tuple[int, int]:
     from mlx.utils import tree_flatten
     from mlx_vlm.trainer.lora import LoRaLayer
 
     for name, module in model.language_model.named_modules():
-        layer_idx = extract_layer_index(name)
-        if layer_idx is not None and layer_idx < cutoff and isinstance(module, LoRaLayer):
-            raise RuntimeError(f"Adapter found in frozen layer {layer_idx}: {name}")
+        if isinstance(module, LoRaLayer) and not is_allowed_lora_target_name(
+            name,
+            cutoff=cutoff,
+            total_layers=total_layers,
+        ):
+            raise RuntimeError(f"Unexpected LoRA target remains after filtering: {name}")
 
     trainable_tree = model.trainable_parameters()
     trainable_paths = {
@@ -2309,6 +2655,15 @@ def _execute_training(
         _import_training_runtime()
     )
 
+    # --- Pre-training Validation ---
+    # Enforce that the resumed adapter matches the model architecture and ID.
+    validate_resumed_adapter_model_and_shape(
+        adapter_path=plan.args.adapter_path,
+        expected_model_id=config.model.model_id,
+        expected_lora_num_layers=config.training.lora_num_layers,
+        expected_target_suffixes=EXPECTED_LORA_TARGET_SUFFIXES,
+    )
+
     coverage_tracker: StrictCoverageTracker | None = None
     lock_acquired = False
     checkpoint_cleanup_stop: threading.Event | None = None
@@ -2339,6 +2694,13 @@ def _execute_training(
         model, processor = load(
             plan.args.model_path,
             processor_config={"trust_remote_code": True},
+        )
+        validate_resumed_adapter_model_and_shape(
+            adapter_path=plan.args.adapter_path,
+            expected_model_id=config.model.model_id,
+            expected_hidden_size=_model_hidden_size(model),
+            expected_lora_num_layers=config.training.lora_num_layers,
+            expected_target_suffixes=EXPECTED_LORA_TARGET_SUFFIXES,
         )
 
         dataset, val_dataset = _load_training_dataset(plan.args, load_dataset)
@@ -2810,14 +3172,62 @@ def _execute_training(
                     f"required={config.training.completion_mask_preflight_min_mask_zero_fraction:.3f}."
                 )
 
-        validate_resumed_adapter_lora_hyperparams(
-            adapter_path=plan.args.adapter_path,
-            lora_rank=config.training.lora_rank,
-            lora_alpha=config.training.lora_alpha,
-            lora_dropout=config.training.lora_dropout,
-        )
+        # --- LoRA Capacity Handoff & Preparation ---
+        # Detect rank/alpha mismatches between the resume adapter and the current
+        # config. If we are stepping up capacity (e.g. Stage 0 rank 16 -> Stage 1 rank 32),
+        # we materialize a fresh adapter directory with expanded/rescaled weights.
+        handoff_adapter_path: Path | None = None
+        if plan.args.adapter_path:
+            input_dim_rewrites = adapter_lora_input_dim_rewrites(
+                plan.args.adapter_path,
+                expected_model_id=config.model.model_id,
+            )
+            source_hparams = load_source_lora_hyperparams(plan.args.adapter_path)
+            if source_hparams or input_dim_rewrites:
+                source_hparams = source_hparams or {}
+                sr = source_hparams.get("rank")
+                sa = source_hparams.get("alpha")
+                tr = config.training.lora_rank
+                ta = config.training.lora_alpha
+                td = config.training.lora_dropout
 
-        prepared_adapter_path = prepare_adapter_for_mlx_vlm(plan.args.adapter_path)
+                needs_handoff = False
+                if sr is not None and tr is not None and sr != tr:
+                    needs_handoff = True
+                elif sa is not None and ta is not None and sa != ta:
+                    needs_handoff = True
+                elif input_dim_rewrites:
+                    needs_handoff = True
+
+                if needs_handoff:
+                    print(
+                        "LoRA adapter handoff needed: "
+                        f"adapter(rank={sr}, alpha={sa}) vs training(rank={tr}, alpha={ta}), "
+                        f"input_dim_rewrites={input_dim_rewrites}"
+                    )
+                    print("Materializing handoff adapter...")
+                    handoff_dir = config.paths.runs_dir / "handoffs" / f"from_{Path(plan.args.adapter_path).stem}_to_rank{tr}"
+                    materialization = materialize_lora_handoff_adapter(
+                        source_adapter_path=plan.args.adapter_path,
+                        target_dir=handoff_dir,
+                        target_rank=tr,
+                        target_alpha=ta,
+                        target_dropout=td,
+                        input_dim_rewrites=input_dim_rewrites,
+                    )
+                    handoff_adapter_path = Path(materialization["adapter_dir"])
+                    print(f"✓ Handoff adapter materialized at {handoff_adapter_path}")
+                else:
+                    # Strict validation for same-rank resumes to catch accidental mismatches
+                    validate_resumed_adapter_lora_hyperparams(
+                        adapter_path=plan.args.adapter_path,
+                        lora_rank=tr,
+                        lora_alpha=ta,
+                        lora_dropout=td,
+                    )
+
+        # Ensure adapter_path is in a format mlx-vlm expects (directory with adapter_config.json)
+        prepared_adapter_path = prepare_adapter_for_mlx_vlm(handoff_adapter_path or plan.args.adapter_path)
         model = setup_model_for_training(model, plan.args, prepared_adapter_path)
 
         # --- LoRA layer limiting ---
@@ -2825,35 +3235,41 @@ def _execute_training(
         # gradients only flow through the last N transformer layers. The forward
         # pass still runs the frozen base weights for all layers.
         lora_num_layers = getattr(plan.args, "lora_num_layers", None)
-        total_layers = 0
-        cutoff = 0
-        if lora_num_layers is not None:
-            layer_nums: set[int] = set()
-            for name, _ in model.language_model.named_modules():
-                layer_idx = extract_layer_index(name)
-                if layer_idx is not None:
-                    layer_nums.add(layer_idx)
-            total_layers = max(layer_nums) + 1 if layer_nums else 0
-            cutoff = max(0, total_layers - lora_num_layers)
+        layer_nums: set[int] = set()
+        for name, _ in model.language_model.named_modules():
+            layer_idx = extract_layer_index(name)
+            if layer_idx is not None:
+                layer_nums.add(layer_idx)
+        total_layers = max(layer_nums) + 1 if layer_nums else 0
+        cutoff = max(0, total_layers - lora_num_layers) if lora_num_layers is not None else 0
 
         trainable_params: int | None = None
         optimizer_state_entries: int | None = None
-        if lora_num_layers is not None:
-            from mlx_vlm.trainer.lora import LoRaLayer
+        from mlx_vlm.trainer.lora import LoRaLayer
 
-            unwrapped_count = 0
-            for name, module in list(model.language_model.named_modules()):
-                if not isinstance(module, LoRaLayer):
-                    continue
-                layer_num = extract_layer_index(name)
-                if layer_num is not None and layer_num < cutoff:
-                    # Unwrap: replace the LoRaLayer with its inner base linear
-                    unwrap_lora_layer(model.language_model, name, module.original_layer)
-                    unwrapped_count += 1
+        unwrapped_unexpected: list[str] = []
+        for name, module in list(model.language_model.named_modules()):
+            if not isinstance(module, LoRaLayer):
+                continue
 
+            if not is_allowed_lora_target_name(
+                name,
+                cutoff=cutoff,
+                total_layers=total_layers,
+            ):
+                unwrap_lora_layer(model.language_model, name, module.original_layer)
+                unwrapped_unexpected.append(name)
+
+        if unwrapped_unexpected:
             plan.warnings.append(
-                f"LoRA layer limiting: kept last {lora_num_layers}/{total_layers} layers, "
-                f"unwrapped {unwrapped_count} LoRA modules from early layers"
+                "Unwrapped unexpected LoRA targets: "
+                + ", ".join(unwrapped_unexpected[:50])
+            )
+        if lora_num_layers is not None:
+            plan.warnings.append(
+                f"LoRA whitelist filtering: kept transformer target layers "
+                f"{cutoff}-{max(total_layers - 1, 0)} of {total_layers}; "
+                f"unwrapped {len(unwrapped_unexpected)} non-whitelisted LoRA modules"
             )
         # Build the scheduler against the full target run, then offset it on
         # resume so warmup/decay continue from the checkpoint's global step.
@@ -2907,11 +3323,33 @@ def _execute_training(
                 model=model,
                 optimizer=optimizer,
                 cutoff=cutoff,
+                total_layers=total_layers,
             )
             plan.warnings.append(
                 "LoRA optimizer audit: "
                 f"trainable_parameters={trainable_params}, "
                 f"optimizer_state_entries={optimizer_state_entries}"
+            )
+        optimizer_restore = _maybe_restore_optimizer_state(
+            optimizer=optimizer,
+            resume_adapter_path=plan.args.adapter_path,
+            run_id=run_id,
+            config_fingerprint=config_fingerprint_for_checkpoints,
+            dataset_snapshot_id=dataset_snapshot_id_for_checkpoints,
+            model_id=config.model.model_id,
+            lora_rank=config.training.lora_rank,
+            lora_alpha=config.training.lora_alpha,
+            lora_dropout=config.training.lora_dropout,
+            lora_num_layers=lora_num_layers,
+        )
+        if optimizer_restore["restored"]:
+            plan.warnings.append(
+                f"Restored optimizer state from {optimizer_restore['optimizer_state']}"
+            )
+        else:
+            plan.warnings.append(
+                "Optimizer state reset: "
+                + str(optimizer_restore.get("optimizer_state_reset_reason"))
             )
 
         expected_lora_num_layers = int(lora_num_layers) if lora_num_layers is not None else None
@@ -2950,6 +3388,11 @@ def _execute_training(
                 "unexpected LoRA layers above model range: "
                 + ", ".join(map(str, lora_targets["unexpected_layer_indices_above_max"]))
             )
+        if lora_targets["unexpected_targets"]:
+            lora_audit_failures.append(
+                "unexpected LoRA targets: "
+                + ", ".join(lora_targets["unexpected_targets"][:50])
+            )
         if (
             expected_lora_num_layers is not None
             and lora_targets["observed_lora_layer_count"] < expected_lora_num_layers
@@ -2972,6 +3415,60 @@ def _execute_training(
         plan.warnings.append(
             f"LoRA target audit wrote {lora_targets['target_count']} targets to {lora_targets_path}"
         )
+        shape_audit = collect_lora_shape_audit(model)
+        shape_audit_path = run_dir_for_named / "lora_shape_audit.json"
+        shape_audit_path.write_text(
+            json.dumps(shape_audit, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        plan.warnings.append(
+            f"LoRA shape audit wrote {len(shape_audit['lora_shapes'])} rows to {shape_audit_path}"
+        )
+
+        try:
+            first_item = train_dataset[0]
+            preflight_batch = _build_training_batch([first_item], max_seq_length=plan.args.max_seq_length)
+            preflight_loss = _vision_language_loss_fn_with_marker_sequences(
+                model,
+                preflight_batch,
+                train_on_completions=plan.args.train_on_completions,
+                assistant_id=plan.args.assistant_id,
+                assistant_marker_sequences=assistant_marker_sequences,
+                repetition_unlikelihood_enabled=False,
+            )
+            mx = import_mlx_core()
+            mx.eval(preflight_loss)
+        except Exception as exc:
+            failed_shapes_path = run_dir_for_named / "forward_preflight_failure.json"
+            failed_shapes_path.write_text(
+                json.dumps(
+                    {
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "input_ids_shape": list(getattr(preflight_batch.get("input_ids"), "shape", []))
+                        if "preflight_batch" in locals()
+                        else None,
+                        "attention_mask_shape": list(getattr(preflight_batch.get("attention_mask"), "shape", []))
+                        if "preflight_batch" in locals()
+                        else None,
+                        "pixel_values_shape": (
+                            list(preflight_batch["pixel_values"].shape)
+                            if "preflight_batch" in locals()
+                            and preflight_batch.get("pixel_values") is not None
+                            else None
+                        ),
+                        "lora_shape_audit_path": str(shape_audit_path),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            raise RuntimeError(
+                f"Forward preflight failed before training step 0. "
+                f"See {failed_shapes_path} and {shape_audit_path}."
+            ) from exc
+        plan.warnings.append("Forward preflight passed before training step 0.")
 
         telemetry_path = Path(plan.args.output_path).expanduser().resolve().parent / "phase_boundary_telemetry.json"
         write_phase_boundary_telemetry(
@@ -2988,6 +3485,10 @@ def _execute_training(
                 "global_step_offset": schedule_step_offset,
                 "target_optimizer_updates": schedule_total_updates,
                 "optimizer_update_offset": schedule_update_offset,
+                "optimizer_state_restored": optimizer_restore["restored"],
+                "optimizer_state": optimizer_restore.get("optimizer_state"),
+                "optimizer_state_reset_reason": optimizer_restore.get("optimizer_state_reset_reason"),
+                "failed_optimizer_restore_checks": optimizer_restore.get("failed_optimizer_restore_checks"),
                 "warmup_steps": warmup_steps,
                 "warmup_fraction": config.training.lr_warmup_fraction,
                 "peak_learning_rate": plan.args.learning_rate,
@@ -3036,6 +3537,7 @@ def _execute_training(
         training_args._tikz_collapse_probe_save_checkpoint_on_pass = bool(
             config.training.collapse_probe.save_checkpoint_on_pass
         )
+        training_args._tikz_collapse_probe_forced_prefix = "\\begin{tikzpicture}\n"
 
         checkpoint_dir = Path(plan.args.output_path).expanduser().resolve().parent
         checkpoint_pins = frozenset(config.training.checkpoint_pin_iterations)
@@ -3126,12 +3628,13 @@ def _execute_training(
             if not checkpoint_path.exists():
                 return
 
+            optimizer_state_path = save_optimizer_state_sidecar(optimizer, checkpoint_path)
             iteration = extract_iteration_from_checkpoint_name(checkpoint_path)
             context = _checkpoint_context(iteration_hint=iteration)
             metrics = {"validation_loss": latest_val_loss} if latest_val_loss is not None else None
             checkpoint_role = "periodic_checkpoint" if iteration is not None else "adapter_snapshot"
             extra_metadata = {
-                "resolved_training_config": _resolved_training_config_snapshot(config, plan),
+                "resolved_training_config": _resolved_training_config_snapshot(config, plan, model=model_obj),
                 "pack_audit_sha256": (
                     _file_sha256(config.training.pretokenized_packed_cache_path.with_name(
                         config.training.pretokenized_packed_cache_path.stem + "_audit.json"
@@ -3143,6 +3646,10 @@ def _execute_training(
                     else None
                 ),
                 "adapter_sha256": _file_sha256(checkpoint_path),
+                "optimizer_state": str(optimizer_state_path) if optimizer_state_path is not None else None,
+                "optimizer_state_restored": optimizer_restore["restored"],
+                "optimizer_state_reset_reason": optimizer_restore.get("optimizer_state_reset_reason"),
+                "failed_optimizer_restore_checks": optimizer_restore.get("failed_optimizer_restore_checks"),
                 "loss_normalization_version": "completion_effective_mask_v1",
             }
 
@@ -3263,6 +3770,19 @@ def _execute_training(
             assistant_id=plan.args.assistant_id,
             processor=processor,
         )
+        learning_summary_path = run_dir_for_named / "stage_learning_summary.json"
+        learning_summary = _write_stage_learning_summary(
+            output_path=learning_summary_path,
+            telemetry_path=training_args._tikz_gradient_telemetry_path,
+            gradient_accumulation_steps=plan.args.gradient_accumulation_steps,
+            warmup_steps=warmup_steps,
+            target_optimizer_updates=schedule_total_updates,
+            min_updates=config.training.learning_verification_min_updates,
+            min_loss_delta=config.training.learning_verification_min_loss_delta,
+        )
+        plan.warnings.append(f"Stage learning summary written to {learning_summary_path}")
+        if learning_summary.get("learning_warning"):
+            plan.warnings.append(str(learning_summary["learning_warning"]))
         return plan
     finally:
         if coverage_tracker is not None:

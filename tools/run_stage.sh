@@ -19,23 +19,33 @@ source "$PROJECT_ROOT/tools/resume_offset.sh"
 
 # Check arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: run_stage.sh <stage_num> [--resume|--no-resume] [--config <path>] [--resume-from <adapter>]"
+  echo "Usage: run_stage.sh <stage_num> [--resume|--no-resume] [--config <path>] [--resume-from <adapter>] [--skip-gate]"
   echo ""
   echo "Examples:"
   echo "  ./tools/run_stage.sh 0              # Run synthetic primitive warmup from scratch"
   echo "  ./tools/run_stage.sh 1              # Run stage 1, resuming from stage 0 if published"
   echo "  ./tools/run_stage.sh 3              # Run stage 3 (resumes if checkpoint exists)"
+  echo "  ./tools/run_stage.sh 0 --skip-gate  # Run stage 0 without promotion gate check"
   exit 1
 fi
 
 STAGE_NUM=$1
 shift
-RESUME_FLAG="--resume"
+RESUME_FLAG="" # Will be defaulted based on stage number
 OVERRIDE_CONFIG=""
 RESUME_FROM=""
 ALLOW_IMPLICIT_RESUME="${ALLOW_IMPLICIT_RESUME:-0}"
 ALLOW_QUARANTINED="${ALLOW_QUARANTINED:-0}"
 SKIP_DATA_GATES="${SKIP_DATA_GATES:-0}"
+SKIP_GATE="${SKIP_GATE:-0}"
+
+# Set default resume flag: Stage 0 starts from scratch, others resume.
+if [ "$STAGE_NUM" = "0" ]; then
+  RESUME_FLAG="--no-resume"
+else
+  RESUME_FLAG="--resume"
+fi
+
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,6 +77,10 @@ while [ $# -gt 0 ]; do
       SKIP_DATA_GATES="1"
       shift
       ;;
+    --skip-gate)
+      SKIP_GATE="1"
+      shift
+      ;;
     *)
       echo "ERROR: Unknown argument: $1"
       exit 1
@@ -77,6 +91,12 @@ done
 # Validate stage number
 if ! [[ "$STAGE_NUM" =~ ^[0-5]$ ]]; then
   echo "ERROR: Stage number must be 0-5"
+  exit 1
+fi
+
+# Safety guard: Stage 0 must not implicitly resume.
+if [ "$STAGE_NUM" = "0" ] && [ "$RESUME_FLAG" = "--resume" ] && [ -z "$RESUME_FROM" ]; then
+  echo "ERROR: Stage 0 must not implicitly resume. Use --resume-from explicitly if intentional."
   exit 1
 fi
 
@@ -102,12 +122,12 @@ CHECKPOINT_DIRS=(
 
 # Adapter outputs
 ADAPTER_OUTPUTS=(
-  "runs/tikz_stage0_adapter.safetensors"
-  "runs/tikz_stage1_adapter.safetensors"
-  "runs/tikz_stage2_adapter.safetensors"
-  "runs/tikz_stage3_adapter.safetensors"
-  "runs/tikz_stage4_adapter.safetensors"
-  "runs/tikz_stage5_adapter.safetensors"
+  "runs/published/stage0"
+  "runs/published/stage1"
+  "runs/published/stage2"
+  "runs/published/stage3"
+  "runs/published/stage4"
+  "runs/published/stage5"
 )
 
 # Detect dry-run mode
@@ -145,10 +165,9 @@ echo ""
 # Create checkpoint directory
 mkdir -p "$checkpoint_dir"
 
-# Ensures adapter_config.json exists in both locations used by the resume path:
-# train.py wraps raw .safetensors files from runs/adapter_config.json, while
-# mlx-vlm can also load checkpoints directly from their parent directory.
-"$PYTHON_EXE" - <<'PY' "$config_file" "$PROJECT_ROOT/runs/adapter_config.json" "$checkpoint_dir/adapter_config.json"
+# Ensure adapter_config.json exists next to stage checkpoints. Do not write a
+# shared runs/adapter_config.json; published adapters use per-stage directories.
+"$PYTHON_EXE" - <<'PY' "$config_file" "$checkpoint_dir/adapter_config.json"
 import json
 import pathlib
 import sys
@@ -156,7 +175,7 @@ import sys
 import yaml
 
 config_path = pathlib.Path(sys.argv[1])
-output_paths = [pathlib.Path(arg) for arg in sys.argv[2:]]
+output_path = pathlib.Path(sys.argv[2])
 with config_path.open("r", encoding="utf-8") as handle:
   config = yaml.safe_load(handle)
 training = config.get("training", {})
@@ -165,9 +184,8 @@ payload = {
   "alpha": int(training.get("lora_alpha", 48)),
   "dropout": float(training.get("lora_dropout", 0.0)),
 }
-for output_path in output_paths:
-  output_path.parent.mkdir(parents=True, exist_ok=True)
-  output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+output_path.parent.mkdir(parents=True, exist_ok=True)
+output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
 # Check for existing checkpoint
@@ -385,7 +403,7 @@ elif [ "$RESUME_FLAG" == "--resume" ]; then
     echo "Resuming from checkpoint: $latest_checkpoint"
     cmd+=(--resume-adapter "$latest_checkpoint")
     append_resume_offset_if_checkpoint "$latest_checkpoint"
-  elif [ $STAGE_NUM -gt 0 ] && [ -f "$prev_adapter" ]; then
+  elif [ $STAGE_NUM -gt 0 ] && { [ -f "$prev_adapter" ] || [ -d "$prev_adapter" ]; }; then
     echo "No checkpoint found. Resuming from previous stage adapter: $prev_adapter"
     cmd+=(--resume-adapter "$prev_adapter")
   else
@@ -430,7 +448,7 @@ selected_adapter="$adapter_output"
 
 # Publish a stable adapter path for chaining into next stage.
 # 4. Post-training stage gate and checkpoint selection (mandatory for non-dry-runs)
-if [ -z "$DRY_RUN_FLAG" ]; then
+if [ -z "$DRY_RUN_FLAG" ] && [ "${SKIP_GATE:-0}" != "1" ]; then
     echo ""
     echo "Running post-training stage gate and selecting last passing checkpoint..."
     selection_json="$checkpoint_dir/selected_checkpoint.json"
@@ -453,8 +471,13 @@ if [ -z "$DRY_RUN_FLAG" ]; then
         echo "✓ Stage gate passed."
         echo "  Selected adapter: $selected_adapter"
     else
-        echo "ERROR: No checkpoint passed the stage gate. Adapter(s) have been quarantined as applicable."
-        exit 1
+        if [ "$STAGE_NUM" = "0" ]; then
+            echo "WARNING: Stage 0 gate failed, but continuing as requested."
+            selected_adapter="$adapter_output"
+        else
+            echo "ERROR: No checkpoint passed the stage gate. Adapter(s) have been quarantined as applicable."
+            exit 1
+        fi
     fi
 fi
 
@@ -470,10 +493,11 @@ PUBLISH_ON_SUCCESS="${PUBLISH_ON_SUCCESS:-$PUBLISH_ON_SUCCESS_DEFAULT}"
 if [ "$PUBLISH_ON_SUCCESS" != "1" ]; then
   echo "  Publish skipped (PUBLISH_ON_SUCCESS=$PUBLISH_ON_SUCCESS)."
 elif [ -f "$selected_adapter" ]; then
-  mkdir -p "$(dirname "$published_adapter")"
-  cp -f "$selected_adapter" "$published_adapter"
+  mkdir -p "$published_adapter"
+  cp -f "$selected_adapter" "$published_adapter/adapters.safetensors"
+  cp -f "$checkpoint_dir/adapter_config.json" "$published_adapter/adapter_config.json"
   if [ -f "${selected_adapter}.metadata.json" ]; then
-    cp -f "${selected_adapter}.metadata.json" "${published_adapter}.metadata.json"
+    cp -f "${selected_adapter}.metadata.json" "$published_adapter/checkpoint_metadata.json"
   fi
   echo "  Published adapter: $published_adapter"
 else

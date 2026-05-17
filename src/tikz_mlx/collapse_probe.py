@@ -24,7 +24,8 @@ PRODUCTION_DECODING = {
     "top_p": 1.0,
     "top_k": 64,
     "min_p": 0.05,
-    "repetition_penalty": 1.2,
+    "repetition_penalty": 1.3,
+    "no_repeat_ngram_size": 4,
 }
 
 RAW_GREEDY_DECODING = {
@@ -130,31 +131,38 @@ def run_collapse_probe(model, processor, build_prompt_fn, verbose=False, decodin
     model.eval()
     failures = []
     generation_kwargs = _supported_generation_kwargs(decoding if decoding is not None else PRODUCTION_DECODING)
-    
-    for prompt_text in SENTINEL_PROMPTS:
-        # We need to build the actual prompt using the contract
-        full_prompt = build_prompt_fn(prompt_text)
-        
-        try:
-            # Generate a small sample
-            result = generate(
-                model=model,
-                processor=processor,
-                prompt=full_prompt,
-                max_tokens=512,
-                verbose=False,
-                **generation_kwargs,
-            )
-            text = result.text
-            reasons = check_for_collapse(text)
-            if reasons:
-                failures.append({"prompt": prompt_text, "response": text, "reasons": reasons})
-        except Exception as e:
-            if verbose:
-                print(f"Probe failed for prompt '{prompt_text}': {e}")
-            continue
-            
-    model.train()
+
+    try:
+        for prompt_text in SENTINEL_PROMPTS:
+            # We need to build the actual prompt using the contract
+            full_prompt = build_prompt_fn(prompt_text)
+
+            try:
+                # Generate a small sample
+                result = generate(
+                    model=model,
+                    processor=processor,
+                    prompt=full_prompt,
+                    max_tokens=512,
+                    verbose=False,
+                    **generation_kwargs,
+                )
+                text = result.text
+                reasons = check_for_collapse(text)
+                if reasons:
+                    failures.append({"prompt": prompt_text, "response": text, "reasons": reasons})
+            except Exception as e:
+                if verbose:
+                    print(f"Probe failed for prompt '{prompt_text}': {e}")
+                failures.append(
+                    {
+                        "prompt": prompt_text,
+                        "response": "",
+                        "reasons": [f"probe_generation_exception: {type(e).__name__}: {e}"],
+                    }
+                )
+    finally:
+        model.train()
     return len(failures) == 0, failures
 
 
@@ -165,6 +173,7 @@ def run_collapse_probe_suite(
     verbose: bool = False,
     production_decoding: dict[str, Any] | None = None,
     raw_decoding: dict[str, Any] | None = None,
+    forced_prefix: str | None = None,
 ) -> dict[str, Any]:
     production = production_decoding or PRODUCTION_DECODING
     raw = raw_decoding or RAW_GREEDY_DECODING
@@ -182,6 +191,21 @@ def run_collapse_probe_suite(
         verbose=verbose,
         decoding=raw,
     )
+    forced_prefix_diagnostic = None
+    if not production_passed and forced_prefix:
+        prefixed_passed, prefixed_failures = run_collapse_probe(
+            model,
+            processor,
+            lambda text: build_prompt_fn(text) + forced_prefix,
+            verbose=verbose,
+            decoding=production,
+        )
+        forced_prefix_diagnostic = {
+            "prefix": forced_prefix,
+            "passed": prefixed_passed,
+            "failures": prefixed_failures,
+            "diagnostic_only": True,
+        }
     return {
         "passed": production_passed,
         "production": {
@@ -195,5 +219,6 @@ def run_collapse_probe_suite(
             "warning_only": True,
             "failures": raw_failures,
         },
+        "forced_prefix_diagnostic": forced_prefix_diagnostic,
         "failures": production_failures,
     }

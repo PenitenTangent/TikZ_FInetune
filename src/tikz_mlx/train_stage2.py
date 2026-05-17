@@ -19,6 +19,13 @@ try:
 except ImportError:  # pragma: no cover - optional runtime dependency
     tqdm = None
 
+from .adapter_config_io import (
+    adapter_lora_input_dim_rewrites,
+    load_source_lora_hyperparams,
+    materialize_lora_handoff_adapter,
+    validate_resumed_adapter_lora_hyperparams,
+    validate_resumed_adapter_model_and_shape,
+)
 from .checkpointing import (
     CheckpointContext,
     NamedCheckpointPolicyManager,
@@ -41,7 +48,15 @@ from .settings import (
     ensure_runtime_directories,
     require_stage2_training_opt_in,
 )
-from .train import StrictCoverageTracker, _acquire_run_lock, _release_run_lock, _resolve_run_id
+from .train import (
+    EXPECTED_LORA_TARGET_SUFFIXES,
+    StrictCoverageTracker,
+    _acquire_run_lock,
+    _model_hidden_size,
+    _release_run_lock,
+    _resolve_run_id,
+    is_allowed_lora_target_name,
+)
 
 
 TRUNCATION_REWARD_PENALTY = 0.08
@@ -837,43 +852,91 @@ def _execute_stage2_training(config: PipelineConfig, plan: Stage2TrainingPlan) -
     )
 
     configure_wired_limit(config.memory)
+    validate_resumed_adapter_model_and_shape(
+        adapter_path=plan.args.adapter_path,
+        expected_model_id=config.model.model_id,
+        expected_lora_num_layers=config.training.lora_num_layers,
+        expected_target_suffixes=EXPECTED_LORA_TARGET_SUFFIXES,
+    )
     model, processor = load(
         plan.args.model_path,
         processor_config={"trust_remote_code": True},
     )
-    prepared_adapter_path = prepare_adapter_for_mlx_vlm(plan.args.adapter_path)
+    validate_resumed_adapter_model_and_shape(
+        adapter_path=plan.args.adapter_path,
+        expected_model_id=config.model.model_id,
+        expected_hidden_size=_model_hidden_size(model),
+        expected_lora_num_layers=config.training.lora_num_layers,
+        expected_target_suffixes=EXPECTED_LORA_TARGET_SUFFIXES,
+    )
+    handoff_adapter_path: Path | None = None
+    if plan.args.adapter_path:
+        input_dim_rewrites = adapter_lora_input_dim_rewrites(
+            plan.args.adapter_path,
+            expected_model_id=config.model.model_id,
+        )
+        source_hparams = load_source_lora_hyperparams(plan.args.adapter_path) or {}
+        sr = source_hparams.get("rank")
+        sa = source_hparams.get("alpha")
+        tr = config.training.lora_rank
+        ta = config.training.lora_alpha
+        td = config.training.lora_dropout
+        needs_handoff = bool(input_dim_rewrites)
+        if sr is not None and tr is not None and sr != tr:
+            needs_handoff = True
+        elif sa is not None and ta is not None and sa != ta:
+            needs_handoff = True
+
+        if needs_handoff:
+            handoff_dir = config.paths.runs_dir / "handoffs" / f"stage2_from_{Path(plan.args.adapter_path).stem}_to_rank{tr}"
+            materialization = materialize_lora_handoff_adapter(
+                source_adapter_path=plan.args.adapter_path,
+                target_dir=handoff_dir,
+                target_rank=tr,
+                target_alpha=ta,
+                target_dropout=td,
+                input_dim_rewrites=input_dim_rewrites,
+            )
+            handoff_adapter_path = Path(materialization["adapter_dir"])
+            print(f"[Stage2] LoRA handoff adapter materialized at {handoff_adapter_path}", flush=True)
+        elif source_hparams:
+            validate_resumed_adapter_lora_hyperparams(
+                adapter_path=plan.args.adapter_path,
+                lora_rank=tr,
+                lora_alpha=ta,
+                lora_dropout=td,
+            )
+
+    prepared_adapter_path = prepare_adapter_for_mlx_vlm(handoff_adapter_path or plan.args.adapter_path)
     model = setup_model_for_training(model, plan.args, prepared_adapter_path)
 
     # --- LoRA layer limiting ---
     # In Stage 2, we must also enforce LoRA layer limiting to be consistent with Stage 1.
     lora_num_layers = getattr(plan.args, "lora_num_layers", None)
-    if lora_num_layers is not None:
-        from mlx_vlm.trainer.lora import LoRaLayer
+    from mlx_vlm.trainer.lora import LoRaLayer
 
-        layer_nums: set[int] = set()
-        for name, _ in model.language_model.named_modules():
-            layer_idx = extract_layer_index(name)
-            if layer_idx is not None:
-                layer_nums.add(layer_idx)
-        total_layers = max(layer_nums) + 1 if layer_nums else 0
-        cutoff = max(0, total_layers - lora_num_layers)
+    layer_nums: set[int] = set()
+    for name, _ in model.language_model.named_modules():
+        layer_idx = extract_layer_index(name)
+        if layer_idx is not None:
+            layer_nums.add(layer_idx)
+    total_layers = max(layer_nums) + 1 if layer_nums else 0
+    cutoff = max(0, total_layers - lora_num_layers) if lora_num_layers is not None else 0
 
-        unwrapped_count = 0
-        for name, module in list(model.language_model.named_modules()):
-            if not isinstance(module, LoRaLayer):
-                continue
-            layer_num = extract_layer_index(name)
-            if layer_num is not None and layer_num < cutoff:
-                # Unwrap: replace the LoRaLayer with its inner base linear
-                unwrap_lora_layer(model.language_model, name, module.original_layer)
-                unwrapped_count += 1
-        
-        if unwrapped_count > 0:
-            print(
-                f"[Stage2] LoRA layer limiting: kept last {lora_num_layers}/{total_layers} layers, "
-                f"unwrapped {unwrapped_count} LoRA modules from early layers",
-                flush=True
-            )
+    unwrapped_unexpected: list[str] = []
+    for name, module in list(model.language_model.named_modules()):
+        if not isinstance(module, LoRaLayer):
+            continue
+        if not is_allowed_lora_target_name(name, cutoff=cutoff, total_layers=total_layers):
+            unwrap_lora_layer(model.language_model, name, module.original_layer)
+            unwrapped_unexpected.append(name)
+
+    if unwrapped_unexpected:
+        print(
+            "[Stage2] Unwrapped unexpected LoRA targets: "
+            + ", ".join(unwrapped_unexpected[:50]),
+            flush=True,
+        )
     if plan.args.grad_checkpoint:
         for module in model.children().values():
             if hasattr(module, "layers"):

@@ -18,6 +18,7 @@ export PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Stage configurations
 STAGES=(
+  "configs/curriculum_stage0.yaml"
   "configs/curriculum_stage1.yaml"
   "configs/curriculum_stage2.yaml"
   "configs/curriculum_stage3.yaml"
@@ -27,6 +28,7 @@ STAGES=(
 
 # Checkpoint directories (one per stage)
 CHECKPOINT_DIRS=(
+  "runs/curriculum_stage0"
   "runs/curriculum_stage1"
   "runs/curriculum_stage2"
   "runs/curriculum_stage3"
@@ -36,11 +38,12 @@ CHECKPOINT_DIRS=(
 
 # Final adapter outputs
 ADAPTER_OUTPUTS=(
-  "runs/tikz_stage1_adapter.safetensors"
-  "runs/tikz_stage2_adapter.safetensors"
-  "runs/tikz_stage3_adapter.safetensors"
-  "runs/tikz_stage4_adapter.safetensors"
-  "runs/tikz_stage5_adapter.safetensors"
+  "runs/published/stage0"
+  "runs/published/stage1"
+  "runs/published/stage2"
+  "runs/published/stage3"
+  "runs/published/stage4"
+  "runs/published/stage5"
 )
 
 echo "========================================="
@@ -48,8 +51,8 @@ echo "5-Stage Curriculum Training (No Packing)"
 echo "========================================="
 
 MAX_STAGE="${MAX_STAGE:-3}"
-if ! [[ "$MAX_STAGE" =~ ^[1-5]$ ]]; then
-  echo "ERROR: MAX_STAGE must be between 1 and 5"
+if ! [[ "$MAX_STAGE" =~ ^[0-5]$ ]]; then
+  echo "ERROR: MAX_STAGE must be between 0 and 5"
   exit 1
 fi
 if [ "$MAX_STAGE" -lt 5 ]; then
@@ -58,7 +61,7 @@ if [ "$MAX_STAGE" -lt 5 ]; then
 fi
 
 for stage_idx in "${!STAGES[@]}"; do
-  stage_num=$((stage_idx + 1))
+  stage_num=$stage_idx
   if [ "$stage_num" -gt "$MAX_STAGE" ]; then
     echo "Skipping stage $stage_num because MAX_STAGE=$MAX_STAGE."
     continue
@@ -75,7 +78,7 @@ for stage_idx in "${!STAGES[@]}"; do
   stage_log="$checkpoint_dir/train_stage${stage_num}.log"
   prev_adapter=""
   
-  if [ $stage_num -gt 1 ]; then
+  if [ "$stage_num" -gt 0 ]; then
     prev_adapter="${ADAPTER_OUTPUTS[$((stage_idx - 1))]}"
   fi
 
@@ -92,9 +95,8 @@ for stage_idx in "${!STAGES[@]}"; do
   # Create checkpoint directory if it doesn't exist
   mkdir -p "$checkpoint_dir"
 
-  # Keep the root adapter shim aligned with the stage LoRA settings. The
-  # training planner uses this when resuming from a bare .safetensors file.
-  "$PYTHON_EXE" - <<'PY' "$config_file" "$PROJECT_ROOT/runs/adapter_config.json"
+  # Keep the stage-local adapter shim aligned with the stage LoRA settings.
+  "$PYTHON_EXE" - <<'PY' "$config_file" "$checkpoint_dir/adapter_config.json"
 import json
 import pathlib
 import sys
@@ -131,10 +133,20 @@ PY
   if [ -n "$latest_checkpoint" ]; then
     echo "Resuming from latest checkpoint: $latest_checkpoint"
     cmd+=(--resume-adapter "$latest_checkpoint")
-  # Otherwise resume from previous stage adapter if available.
-  elif [ $stage_num -gt 1 ] && [ -f "$prev_adapter" ]; then
-    echo "Resuming from previous stage adapter: $prev_adapter"
-    cmd+=(--resume-adapter "$prev_adapter")
+  else
+    # Starting from scratch or previous stage. 
+    # If starting from scratch (no local checkpoints), clear any stale coverage state
+    # to avoid "Strict Mode" resume errors if a previous run was aborted.
+    coverage_state_file="$checkpoint_dir/coverage_state_clean_adapter.json"
+    if [ -f "$coverage_state_file" ]; then
+        echo "Clearing stale coverage state for fresh start: $coverage_state_file"
+        rm -f "$coverage_state_file"
+    fi
+    
+    if [ "$stage_num" -gt 0 ] && { [ -f "$prev_adapter" ] || [ -d "$prev_adapter" ]; }; then
+      echo "Resuming from previous stage adapter: $prev_adapter"
+      cmd+=(--resume-adapter "$prev_adapter")
+    fi
   fi
 
   # Optional passthrough args (example: TRAIN_EXTRA_ARGS="--dry-run --iters 20")
@@ -166,6 +178,20 @@ PY
   echo "✓ Stage $stage_num completed successfully"
   echo "  Final adapter: $adapter_output"
 
+  # Run post-training probe for Stage 0 (non-blocking)
+  if [ "$stage_num" = "0" ]; then
+    echo ""
+    echo "Running Stage 0 probe (non-blocking)..."
+    "$PYTHON_EXE" tools/select_last_good_checkpoint.py \
+      --config "$config_file" \
+      --stage "stage0" \
+      --gate-config "configs/promotion_gate.yaml" \
+      --preferred-adapter "$adapter_output" \
+      --checkpoint-dir "$checkpoint_dir" \
+      --num-samples 100 || echo "WARNING: Stage 0 probe failed, but continuing as requested."
+    echo ""
+  fi
+
   # Publish stable adapter path for chaining and downstream scripts.
   PUBLISH_ON_SUCCESS_DEFAULT="1"
   if [ "$stage_num" -ge 4 ]; then
@@ -175,10 +201,11 @@ PY
   if [ "$PUBLISH_ON_SUCCESS" != "1" ]; then
     echo "  Publish skipped (PUBLISH_ON_SUCCESS=$PUBLISH_ON_SUCCESS)."
   elif [ -f "$adapter_output" ]; then
-    mkdir -p "$(dirname "$published_adapter")"
-    cp -f "$adapter_output" "$published_adapter"
+    mkdir -p "$published_adapter"
+    cp -f "$adapter_output" "$published_adapter/adapters.safetensors"
+    cp -f "$checkpoint_dir/adapter_config.json" "$published_adapter/adapter_config.json"
     if [ -f "${adapter_output}.metadata.json" ]; then
-      cp -f "${adapter_output}.metadata.json" "${published_adapter}.metadata.json"
+      cp -f "${adapter_output}.metadata.json" "$published_adapter/checkpoint_metadata.json"
     fi
     echo "  Published adapter: $published_adapter"
   else
@@ -210,8 +237,8 @@ echo "Final adapters:"
 for i in "${!ADAPTER_OUTPUTS[@]}"; do
   stage_num=$((i + 1))
   adapter="${ADAPTER_OUTPUTS[$i]}"
-  if [ -f "$adapter" ]; then
-    size=$(du -h "$adapter" | cut -f1)
+  if [ -d "$adapter" ]; then
+    size=$(du -sh "$adapter" | cut -f1)
     echo "  Stage $stage_num: $adapter ($size)"
   fi
 done

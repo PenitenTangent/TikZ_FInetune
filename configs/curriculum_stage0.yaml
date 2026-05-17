@@ -30,7 +30,8 @@ inference:
   initial_decoding:
     max_tokens: 4096
     min_p: 0.05
-    repetition_penalty: 1.2
+    no_repeat_ngram_size: 4
+    repetition_penalty: 1.3
     temperature: 0.0
     top_k: 64
     top_p: 1.0
@@ -49,7 +50,7 @@ memory:
   batch_size: 1
   clear_cache_between_retries: true
   freeze_vision: true
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 8
   gradient_checkpointing: true
   peak_memory_abort_gb: 18.0
   retry_cache_policy: clear
@@ -97,19 +98,22 @@ training:
     interval_steps: 50
     max_failures: 1
     save_checkpoint_on_pass: true
-  dataset_path: data/prepared/curriculum/synthetic_primitives_filtered.jsonl
+  dataset_path: data/prepared/curriculum/stage0_compile_curriculum_clean.jsonl
   dry_run_steps: 2
   epochs: 1
   gold_eval_dataset_path: data/prepared/gold_eval_unified_deleaked.jsonl
-  iters: 100
+  iters: 1600
   learning_rate: 1.0e-06
+  lr_warmup_fraction: 0.05
+  learning_verification_min_loss_delta: 0.001
+  learning_verification_min_updates: 5
   lora_alpha: 32
   lora_dropout: 0.08
   lora_num_layers: 42
   lora_rank: 16
   max_grad_norm: 0.5
   min_validation_compilation_rate: 0.0
-  pretokenized_cache_path: data/prepared/curriculum/synthetic_primitives_tokenized.npy
+  pretokenized_cache_path: data/prepared/curriculum/stage0_compile_curriculum_tokenized.npy
   pretokenized_packed_cache_path: null
   require_nonempty_gold_eval_dataset: true
   require_nonempty_validation_dataset: true
@@ -170,7 +174,7 @@ training:
   syntax_structural_weight: 5.0
   syntax_weight_path: null
   syntax_weighted_loss: false
-  train_dataset_path: data/prepared/curriculum/synthetic_primitives_filtered.jsonl
+  train_dataset_path: data/prepared/curriculum/stage0_compile_curriculum_clean.jsonl
   train_on_completions: true
   repetition_unlikelihood_enabled: false
   repetition_unlikelihood_weight: 0.0

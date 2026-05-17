@@ -223,6 +223,7 @@ class DecodingConfig:
     top_k: int | None
     min_p: float | None
     repetition_penalty: float | None
+    no_repeat_ngram_size: int | None
 
     @classmethod
     def from_mapping(cls, mapping: dict[str, Any]) -> "DecodingConfig":
@@ -244,6 +245,7 @@ class DecodingConfig:
         top_k = _optional_int("top_k")
         min_p = _optional_float("min_p")
         repetition_penalty = _optional_float("repetition_penalty")
+        no_repeat_ngram_size = _optional_int("no_repeat_ngram_size")
 
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError("inference decoding max_tokens must be positive when provided.")
@@ -257,6 +259,8 @@ class DecodingConfig:
             raise ValueError("inference decoding min_p must be in the range (0, 1] when provided.")
         if repetition_penalty is not None and repetition_penalty <= 0.0:
             raise ValueError("inference decoding repetition_penalty must be positive when provided.")
+        if no_repeat_ngram_size is not None and no_repeat_ngram_size <= 0:
+            raise ValueError("inference decoding no_repeat_ngram_size must be positive when provided.")
 
         return cls(
             max_tokens=max_tokens,
@@ -265,6 +269,7 @@ class DecodingConfig:
             top_k=top_k,
             min_p=min_p,
             repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
         )
 
 
@@ -649,6 +654,8 @@ class TrainingConfig:
     repair_before_training: bool  # plan §2.3: compile-and-repair each JSONL completion before SFT
     repair_before_training_timeout: float  # per-sample tectonic timeout seconds during the pre-flight repair
     lr_warmup_fraction: float  # fraction of total steps used for LR warmup (default 0.10 for fresh runs)
+    learning_verification_min_updates: int
+    learning_verification_min_loss_delta: float
 
     @classmethod
     def from_mapping(cls, root_dir: Path, mapping: dict[str, Any]) -> "TrainingConfig":
@@ -759,8 +766,14 @@ class TrainingConfig:
         repair_before_training = bool(mapping.get("repair_before_training", False))
         repair_before_training_timeout = float(mapping.get("repair_before_training_timeout", 10.0))
         lr_warmup_fraction = float(mapping.get("lr_warmup_fraction", 0.10))
+        learning_verification_min_updates = int(mapping.get("learning_verification_min_updates", 5))
+        learning_verification_min_loss_delta = float(mapping.get("learning_verification_min_loss_delta", 0.001))
         if not 0.0 <= lr_warmup_fraction < 1.0:
             raise ValueError("training.lr_warmup_fraction must be in the range [0, 1).")
+        if learning_verification_min_updates < 0:
+            raise ValueError("training.learning_verification_min_updates must be non-negative.")
+        if learning_verification_min_loss_delta < 0.0:
+            raise ValueError("training.learning_verification_min_loss_delta must be non-negative.")
         if epochs <= 0:
             raise ValueError("training.epochs must be positive.")
         if steps_per_save <= 0:
@@ -874,6 +887,8 @@ class TrainingConfig:
             repair_before_training=repair_before_training,
             repair_before_training_timeout=repair_before_training_timeout,
             lr_warmup_fraction=lr_warmup_fraction,
+            learning_verification_min_updates=learning_verification_min_updates,
+            learning_verification_min_loss_delta=learning_verification_min_loss_delta,
         )
 
 

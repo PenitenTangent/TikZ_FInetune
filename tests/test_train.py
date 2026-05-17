@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 import tikz_mlx.train as train_module
 from tikz_mlx.adapter_config_io import validate_resumed_adapter_lora_hyperparams
@@ -48,6 +49,7 @@ from tikz_mlx.train import (
     _vision_language_loss_fn_with_marker_sequences,
     build_lora_namespace,
     collect_lora_targets,
+    is_allowed_lora_target_name,
     plan_training,
     run_training,
 )
@@ -209,9 +211,15 @@ def test_clean_adapter_config_uses_plain_ce_and_staged_lr() -> None:
 
 
 def test_curriculum_stage0_uses_current_stable_params_without_unlikelihood() -> None:
-    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "curriculum_stage0.yaml")
+    config_path = Path(__file__).resolve().parents[1] / "configs" / "curriculum_stage0.yaml"
+    config = load_config(config_path)
+    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
+    assert config.memory.gradient_accumulation_steps == 8
+    assert raw_config["training"]["iters"] == 1600
+    assert raw_config["training"]["iters"] % config.memory.gradient_accumulation_steps == 0
     assert config.training.learning_rate == pytest.approx(1.0e-6)
+    assert config.training.lr_warmup_fraction == pytest.approx(0.05)
     assert config.training.lora_rank == 16
     assert config.training.lora_alpha == 32
     assert config.training.lora_num_layers == 42
@@ -223,6 +231,8 @@ def test_curriculum_stage0_uses_current_stable_params_without_unlikelihood() -> 
     assert config.training.collapse_probe.interval_steps == 50
     assert config.training.val_batches == 2
     assert config.training.validation_compile_probe_limit == 2
+    assert config.inference.initial_decoding.repetition_penalty == pytest.approx(1.3)
+    assert config.inference.initial_decoding.no_repeat_ngram_size == 4
 
 
 def test_plan_training_threads_resume_adapter_into_namespace() -> None:
@@ -464,6 +474,7 @@ def test_collect_lora_targets_reports_expected_suffixes() -> None:
     assert all(audit["expected_suffix_hits"].values())
     assert audit["suffix_counts"]["q_proj"] == 1
     assert audit["layer_indices"] == [0]
+    assert audit["unexpected_targets"] == []
 
 
 def test_collect_lora_targets_reports_undercovered_suffixes() -> None:
@@ -492,6 +503,39 @@ def test_collect_lora_targets_reports_undercovered_suffixes() -> None:
     assert audit["undercovered_suffixes"]["v_proj"] == 1
     assert audit["missing_expected_suffixes"]
     assert audit["unexpected_layer_indices_below_min"] == []
+
+
+def test_collect_lora_targets_reports_unexpected_non_whitelisted_targets() -> None:
+    class FakeLoRaLayer:
+        pass
+
+    class FakeLanguageModel:
+        def named_modules(self):
+            return [
+                ("model.layers.0.self_attn.q_proj", FakeLoRaLayer()),
+                ("model.layers.0.per_layer_projection", FakeLoRaLayer()),
+                ("model.per_layer_model_projection", FakeLoRaLayer()),
+            ]
+
+    class FakeModel:
+        language_model = FakeLanguageModel()
+
+    audit = collect_lora_targets(
+        FakeModel(),
+        expected_lora_num_layers=1,
+        expected_min_layer=0,
+        expected_max_layer=0,
+    )
+
+    assert is_allowed_lora_target_name(
+        "language_model.model.layers.0.self_attn.q_proj",
+        cutoff=0,
+        total_layers=1,
+    )
+    assert audit["unexpected_targets"] == [
+        "language_model.model.layers.0.per_layer_projection",
+        "language_model.model.per_layer_model_projection",
+    ]
 
 
 def test_strict_coverage_rejects_filename_resume_offset() -> None:

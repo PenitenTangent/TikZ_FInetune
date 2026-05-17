@@ -11,6 +11,8 @@ from typing import Any
 
 from .checkpointing import checkpoint_metadata_path, resolve_adapter_weights_path
 
+GEMMA_E4B_6BIT_LORA_INPUT_DIM_REWRITES = {2400: 2560}
+
 
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
@@ -139,6 +141,37 @@ def infer_adapter_lora_rank(adapter_path: str | Path | None) -> int | None:
     return next(iter(ranks))
 
 
+def adapter_lora_input_dim_rewrites(
+    adapter_path: str | Path | None,
+    *,
+    expected_model_id: str,
+) -> dict[int, int]:
+    """Return known-safe LoRA A input-dimension rewrites needed by an adapter."""
+    if "gemma-4-e4b" not in expected_model_id.lower():
+        return {}
+    weights_path = resolve_adapter_weights_path(adapter_path)
+    if weights_path is None or not weights_path.exists():
+        return {}
+    try:
+        from safetensors import safe_open
+    except Exception:
+        return {}
+
+    rewrites: dict[int, int] = {}
+    with safe_open(weights_path, framework="pt") as handle:
+        for key in handle.keys():
+            if not key.endswith(".A"):
+                continue
+            shape = list(handle.get_slice(key).get_shape())
+            if len(shape) != 2:
+                continue
+            source_dim = int(shape[0])
+            target_dim = GEMMA_E4B_6BIT_LORA_INPUT_DIM_REWRITES.get(source_dim)
+            if target_dim is not None:
+                rewrites[source_dim] = target_dim
+    return rewrites
+
+
 def _write_target_adapter_config(
     adapter_dir: Path,
     *,
@@ -175,6 +208,7 @@ def materialize_lora_handoff_adapter(
     target_dropout: float,
     seed: int = 17,
     init_std: float = 0.01,
+    input_dim_rewrites: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     """Create an mlx-vlm adapter directory compatible with target LoRA settings.
 
@@ -220,6 +254,7 @@ def materialize_lora_handoff_adapter(
         "target_dropout": float(target_dropout),
         "expanded": False,
         "alpha_rescaled": False,
+        "input_dim_rewritten": False,
         "linked_weights": False,
     }
 
@@ -241,7 +276,12 @@ def materialize_lora_handoff_adapter(
     source_scale = source_alpha / source_rank
     target_scale = target_alpha / target_rank
     alpha_scale = source_scale / target_scale
-    needs_weight_rewrite = target_rank != source_rank or not math.isclose(alpha_scale, 1.0)
+    input_dim_rewrites = input_dim_rewrites or {}
+    needs_weight_rewrite = (
+        target_rank != source_rank
+        or not math.isclose(alpha_scale, 1.0)
+        or bool(input_dim_rewrites)
+    )
     if not needs_weight_rewrite:
         _link_or_copy(source_weights, target_weights)
         result["linked_weights"] = True
@@ -274,14 +314,16 @@ def materialize_lora_handoff_adapter(
                     raise RuntimeError(
                         f"Unexpected LoRA rank for {key}: tensor rank={old_rank}, source rank={source_rank}"
                     )
-                expanded = torch.empty(
-                    (tensor.shape[0], target_rank),
+                source_input_dim = int(tensor.shape[0])
+                target_input_dim = int(input_dim_rewrites.get(source_input_dim, source_input_dim))
+                expanded = torch.zeros(
+                    (target_input_dim, target_rank),
                     dtype=tensor.dtype,
                     device="cpu",
                 )
-                expanded[:, :source_rank] = tensor
+                expanded[:source_input_dim, :source_rank] = tensor
                 extra = torch.randn(
-                    (tensor.shape[0], target_rank - source_rank),
+                    (target_input_dim, target_rank - source_rank),
                     generator=generator,
                     dtype=torch.float32,
                     device="cpu",
@@ -320,6 +362,7 @@ def materialize_lora_handoff_adapter(
     os.replace(temp_weights, target_weights)
     result["expanded"] = target_rank != source_rank
     result["alpha_rescaled"] = not math.isclose(alpha_scale, 1.0)
+    result["input_dim_rewritten"] = bool(input_dim_rewrites)
     result["source_alpha"] = source_alpha
     return result
 
@@ -384,3 +427,103 @@ def validate_resumed_adapter_lora_hyperparams(
             f"training(lora_rank={lora_rank}, lora_alpha={lora_alpha}, lora_dropout={lora_dropout}). "
             "Weights would be misaligned; use a compatible checkpoint or regenerate the adapter."
         )
+
+
+def validate_resumed_adapter_model_and_shape(
+    *,
+    adapter_path: str | Path | None,
+    expected_model_id: str,
+    expected_hidden_size: int | None = None,
+    expected_lora_num_layers: int | None = None,
+    expected_target_suffixes: tuple[str, ...] | None = None,
+) -> None:
+    """Verify that the resumed adapter belongs to the correct model and has compatible shapes.
+
+    Enforces that the adapter was trained on the same base architecture to avoid
+    immediate shape mismatches during forward passes.
+    """
+    if adapter_path in (None, ""):
+        return
+    weights_path = resolve_adapter_weights_path(adapter_path)
+    if weights_path is None or not weights_path.exists():
+        return
+
+    # 1. Validate Model ID from metadata sidecar if available
+    metadata_candidates = [
+        checkpoint_metadata_path(weights_path),
+        weights_path.parent / "checkpoint_metadata.json",
+    ]
+    for metadata_path in metadata_candidates:
+        if not metadata_path.exists():
+            continue
+        metadata = _read_json(metadata_path)
+        if metadata and "resolved_training_config" in metadata:
+            resolved_config = metadata["resolved_training_config"]
+            source_model_id = resolved_config.get("model_id")
+            if source_model_id and source_model_id != expected_model_id:
+                raise RuntimeError(
+                    f"Resume adapter model mismatch: source={source_model_id}, target={expected_model_id}. "
+                    "Restart from base or use a compatible checkpoint."
+                )
+            source_hidden_size = resolved_config.get("hidden_size")
+            if source_hidden_size is not None and expected_hidden_size is not None:
+                try:
+                    source_hidden_size_int = int(source_hidden_size)
+                except (TypeError, ValueError):
+                    source_hidden_size_int = None
+                if source_hidden_size_int is not None and source_hidden_size_int != expected_hidden_size:
+                    raise RuntimeError(
+                        "Resume adapter hidden size mismatch: "
+                        f"source={source_hidden_size_int}, target={expected_hidden_size}. "
+                        "Restart from base or use a compatible checkpoint."
+                    )
+            source_lora_num_layers = resolved_config.get("lora_num_layers")
+            if source_lora_num_layers is not None and expected_lora_num_layers is not None:
+                try:
+                    source_lora_num_layers_int = int(source_lora_num_layers)
+                except (TypeError, ValueError):
+                    source_lora_num_layers_int = None
+                if (
+                    source_lora_num_layers_int is not None
+                    and source_lora_num_layers_int != expected_lora_num_layers
+                ):
+                    raise RuntimeError(
+                        "Resume adapter LoRA layer-count mismatch: "
+                        f"source={source_lora_num_layers_int}, target={expected_lora_num_layers}. "
+                        "Use a compatible checkpoint or materialize an explicit handoff."
+                    )
+            source_target_suffixes = resolved_config.get("target_suffixes")
+            if source_target_suffixes is not None and expected_target_suffixes is not None:
+                if list(source_target_suffixes) != list(expected_target_suffixes):
+                    raise RuntimeError(
+                        "Resume adapter LoRA target suffix mismatch: "
+                        f"source={source_target_suffixes}, target={list(expected_target_suffixes)}. "
+                        "Use a compatible checkpoint or restart from base."
+                    )
+            break
+
+    # 2. Validate tensor shapes. Known-safe rewrites are materialized before
+    # mlx-vlm loads the adapter, so allow those here and reject other stale dims.
+    rewrites = adapter_lora_input_dim_rewrites(
+        adapter_path,
+        expected_model_id=expected_model_id,
+    )
+    try:
+        from safetensors import safe_open
+        with safe_open(weights_path, framework="pt") as handle:
+            for key in handle.keys():
+                if key.endswith(".A"):
+                    tensor_shape = handle.get_slice(key).get_shape()
+                    in_dim = tensor_shape[0]
+                    if in_dim in rewrites:
+                        continue
+                    if "gemma" in expected_model_id.lower() and in_dim == 2400:
+                        raise RuntimeError(
+                            f"Incompatible LoRA tensor shape detected in {key}: in_dim={in_dim}. "
+                            "Expected 2560 for Gemma-4B. This adapter is likely stale or from a different architecture."
+                        )
+    except (ImportError, RuntimeError) as e:
+        if isinstance(e, RuntimeError):
+            raise e
+        # If safetensors/torch missing, skip shape check but metadata check remains
+        pass

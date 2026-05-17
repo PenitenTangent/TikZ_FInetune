@@ -12,14 +12,15 @@ CAUTION:
 
 There are two orchestrators in the repository:
 
-1. `tools/run_curriculum_5stage.sh` (active operational SFT path)
-- Runs 5 SFT stages sequentially.
+1. `tools/run_curriculum_staged.sh` (active operational SFT path)
+- Runs 6 SFT stages sequentially (Stage 0 warmup + Stages 1-5).
 - Uses pretokenized, non-packed caches per stage.
 - Uses tqdm monitor (`tools/run_with_live_progress_tqdm.py`).
 - Stage chaining:
   - Resume from latest stage checkpoint when present.
   - Else resume from previous stage published adapter.
 - Publishes stable stage adapters:
+  - `runs/tikz_stage0_adapter.safetensors`
   - `runs/tikz_stage1_adapter.safetensors`
   - `runs/tikz_stage2_adapter.safetensors`
   - `runs/tikz_stage3_adapter.safetensors`
@@ -28,9 +29,9 @@ There are two orchestrators in the repository:
 
 2. `tools/run_curriculum.sh` (legacy/alternate path)
 - Runs 3 SFT stages and optional Stage-2 RL (`train-stage2`) depending on `training.stage2.enabled` or `RUN_RL`.
-- Not the same flow as `run_curriculum_5stage.sh`.
+- Not the same flow as `run_curriculum_staged.sh`.
 
-The current workstream in this repo uses the 5-stage SFT pipeline.
+The current workstream in this repo uses the 6-stage SFT pipeline.
 
 ---
 
@@ -193,8 +194,8 @@ Code path:
 - `tools/run_stage.sh`
 - `src/tikz_mlx/adapter_config_io.py`
 
-`run_stage.sh` writes `runs/adapter_config.json` from current stage LoRA settings before training.
-This supports resume flows that provide safetensors paths where mlx-vlm expects directory-side config context.
+`run_stage.sh` writes `adapter_config.json` only inside the active stage checkpoint directory.
+It does not write a shared `runs/adapter_config.json`; published adapters are directories with stage-local config metadata so mixed-rank stage artifacts remain unambiguous.
 
 Resume precedence in stage runner:
 1. Latest checkpoint in stage dir.
@@ -221,6 +222,12 @@ Current facts:
 - substantive rate
 - repetition-loop rate
 - code length
+
+Stage 3 LoRA-layer A/B path:
+- Keep Stage 3/4/5 at `lora_num_layers: 36` for the current long-context run.
+- For a later memory/quality test, copy `configs/curriculum_stage3.yaml` to an explicit ablation config, set only `training.lora_num_layers: 42`, and run Stage 3 from the same Stage 2 published adapter with a separate `run_id`, checkpoint directory, and published adapter directory.
+- Compare the 36-layer and 42-layer Stage 3 adapters with the same A/B seed/sample count, recording peak memory, compile rate, substantive rate, repetition-loop rate, collapse probe status, average token/code length, and final validation loss.
+- Do not migrate optimizer state between the 36-layer and 42-layer variants; treat the variant as a capacity-change boundary.
 
 ---
 
@@ -250,8 +257,8 @@ For current staged training, use the `configs/curriculum_stage*.yaml` files.
 - `python tools/pretokenize_dataset.py --model-id mlx-community/gemma-4-e4b-it-6bit --dataset data/prepared/curriculum/train_stageN.jsonl --output data/prepared/curriculum/train_train_stageN_tokenized.npy --max-tokens <stage_limit>`
 
 4. Run stage pipeline
-- Single stage: `bash tools/run_stage.sh <1-5> [--resume]`
-- Full 5-stage: `bash tools/run_curriculum_5stage.sh`
+- Single stage: `bash tools/run_stage.sh <0-5> [--resume]`
+- Full curriculum: `bash tools/run_curriculum_staged.sh`
 
 5. Evaluate adapters
 - `python tools/ab_eval.py --config configs/curriculum_stage5.yaml --adapter-path runs/tikz_stage5_adapter.safetensors --num-samples <N> --seed <S> --max-tokens 2048`
@@ -270,7 +277,7 @@ For current staged training, use the `configs/curriculum_stage*.yaml` files.
 This reference reflects the following live artifacts as ground truth:
 - manifests in `data/manifests/`
 - stage configs in `configs/curriculum_stage*.yaml`
-- orchestration scripts in `tools/run_stage.sh` and `tools/run_curriculum_5stage.sh`
+- orchestration scripts in `tools/run_stage.sh` and `tools/run_curriculum_staged.sh`
 - trainer and adapter validation code in `src/tikz_mlx/train.py` and `src/tikz_mlx/adapter_config_io.py`
 - evaluation code in `tools/ab_eval.py` and `src/tikz_mlx/cli.py`
 

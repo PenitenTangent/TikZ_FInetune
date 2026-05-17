@@ -81,6 +81,7 @@ class GenerationRequest:
     top_k: int | None = None
     min_p: float | None = None
     repetition_penalty: float | None = None
+    no_repeat_ngram_size: int | None = None
 
 
 @dataclass(slots=True)

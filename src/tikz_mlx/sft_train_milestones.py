@@ -147,6 +147,7 @@ def train(
     collapse_probe_save_checkpoint_on_pass = bool(
         getattr(args, "_tikz_collapse_probe_save_checkpoint_on_pass", True)
     )
+    collapse_probe_forced_prefix = getattr(args, "_tikz_collapse_probe_forced_prefix", None)
     on_collapse_probe_pass = getattr(args, "_tikz_on_collapse_probe_pass", None)
     if collapse_probe_interval_steps <= 0:
         collapse_probe_interval_steps = 500
@@ -424,7 +425,12 @@ def train(
                 f"{sft_trainer.Colors.OKBLUE}Iter {global_it}: Running collapse probe...{sft_trainer.Colors.ENDC}",
                 flush=True,
             )
-            probe_payload = run_collapse_probe_suite(model, processor, build_generation_prompt)
+            probe_payload = run_collapse_probe_suite(
+                model,
+                processor,
+                build_generation_prompt,
+                forced_prefix=collapse_probe_forced_prefix,
+            )
             passed = bool(probe_payload.get("passed"))
             failures = probe_payload.get("failures", [])
             raw_warning = probe_payload.get("raw_greedy_warning", {})

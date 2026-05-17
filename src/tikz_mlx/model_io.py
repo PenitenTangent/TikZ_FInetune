@@ -239,6 +239,8 @@ class MlxVlmAdapter:
             call_kwargs["min_p"] = request.min_p
         if request.repetition_penalty is not None and self._supports_parameter(stream_generate, "repetition_penalty"):
             call_kwargs["repetition_penalty"] = request.repetition_penalty
+        if request.no_repeat_ngram_size is not None and self._supports_parameter(stream_generate, "no_repeat_ngram_size"):
+            call_kwargs["no_repeat_ngram_size"] = request.no_repeat_ngram_size
 
         gen = stream_generate(**call_kwargs)
         text = ""
